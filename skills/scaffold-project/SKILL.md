@@ -44,6 +44,8 @@ Every project MUST have a Makefile with language-specific static analysis target
 - `unit-update-golden` - Update golden files
 - `integration` - Run integration tests (manual)
 - `static` - Run all checks: `static: black-check mypy shellcheck pylint unit`
+- `clean-cache` - Delete `__pycache__`, `.pyc`/`.pyo` files, and `.pytest_cache`
+- `clean-venv` - Alias for `clean-cache` then re-creates `.venv`
 
 **Required in requirements.txt:**
 ```
@@ -105,19 +107,6 @@ mypy==1.13.0
 ```bash
 git ls-files 'scripts/*.sh' | xargs shellcheck --severity=error --format=gcc
 ```
-
-#### Universal Targets (All Languages)
-
-**test-dependabot-pr** - MUST be added for all projects. Validates a Dependabot PR locally before merge:
-- Reinstalls dependencies from scratch (ensures the new versions install cleanly)
-- Runs all static checks
-
-**merge-dependabot-prs** - MUST be added for all projects. Calls `scripts/merge_dependabot_prs.sh`:
-- Discovers open Dependabot PRs dynamically via `gh pr list` — no hardcoded PR numbers
-- GitHub Actions PRs: checks out branch, runs `scripts/update_sha_pins.sh` if present, commits any changes, pushes, then queues for auto-merge
-- pip/npm PRs: runs `make test-dependabot-pr` first; skips the PR if tests fail
-- Conflicting PRs: skips with a warning, continues to next PR
-- Always merges with `--auto` (CI must pass before merge completes)
 
 ### Rule 3: Test Target Patterns
 
@@ -437,7 +426,6 @@ Run `make help` to see all available targets. Key targets:
 - `make unit` - Run unit tests
 - `make unit-update-golden` - Update golden files
 - `make integration` - Run integration tests (manual)
-- `make merge-dependabot-prs` - Merge all open Dependabot PRs (auto-detects type, queues after CI)
 
 [Add CDK targets section if CDK project]
 ```
@@ -447,16 +435,7 @@ Run `make help` to see all available targets. Key targets:
 - [ ] Standards section present
 - [ ] Make targets documented
 
-### Step 7: Create Scripts
-
-**For all projects:**
-
-Create `scripts/merge_dependabot_prs.sh` (see template in TEMPLATES section).
-
-Make it executable:
-```bash
-chmod +x scripts/merge_dependabot_prs.sh
-```
+### Step 7: Create Scripts (if needed)
 
 **For CDK Python projects:**
 
@@ -496,9 +475,9 @@ chmod +x scripts/*.sh
 ```
 
 **Verification:**
-- [ ] `scripts/merge_dependabot_prs.sh` exists and is executable
-- [ ] CDK scripts exist (if CDK project)
-- [ ] All scripts are shell-checked
+- [ ] Scripts directory exists (if needed)
+- [ ] Scripts are executable
+- [ ] Scripts are shell-checked
 
 ### Step 8: Install Pre-commit Hooks
 
@@ -526,7 +505,6 @@ Run through this checklist. If ANY item fails, FIX IT before completing.
 - [ ] `make help` works
 - [ ] `make static` target exists and includes all checks
 - [ ] Test targets exist: `unit`, `unit-update-golden`, `integration`
-- [ ] `test-dependabot-pr` and `merge-dependabot-prs` targets exist
 - [ ] CDK targets exist (if CDK project)
 
 **Dependencies:**
@@ -589,7 +567,7 @@ help: ## Show this help
 	source .venv/bin/activate && pip install --upgrade pip setuptools
 	source .venv/bin/activate && pip install -r requirements.txt
 
-clean-venv: ## re-create virtual env
+clean-venv: clean-cache ## re-create virtual env
 	[[ -e .venv ]] && rm -rf .venv
 	$(MAKE) .venv
 
@@ -621,19 +599,12 @@ static-check: black-check mypy shellcheck pylint unit ## run all static checks (
 
 static: black mypy shellcheck pylint unit ## run all static checks with auto-format
 
-test-dependabot-pr: clean-venv ## test a Dependabot PR (reinstall deps + run all checks)
-	$(MAKE) static-check
-	@echo "✓ All checks passed — ready to merge"
-
-merge-dependabot-prs: ## merge all open Dependabot PRs
-	bash scripts/merge_dependabot_prs.sh
-
 clean-cache: ## clean python and pytest cache data
 	@find . -type f -name "*.py[co]" -delete -not -path "./.venv/*"
 	@find . -type d -name __pycache__ -not -path "./.venv/*" -exec rm -rf {} + 2>/dev/null || true
 	@rm -rf .pytest_cache
 
-.PHONY: help black black-check pylint mypy shellcheck unit unit-update-golden integration static static-check test-dependabot-pr merge-dependabot-prs clean-cache clean-venv
+.PHONY: help black black-check pylint mypy shellcheck unit unit-update-golden integration static static-check clean-cache clean-venv
 ```
 
 ### Python + CDK Makefile Template
@@ -659,7 +630,7 @@ help: ## Show this help
 	   pip install -r requirements.txt; \
 	)
 
-clean-venv: ## re-create virtual env
+clean-venv: clean-cache ## re-create virtual env
 	[[ -e .venv ]] && rm -rf .venv
 	$(MAKE) .venv
 
@@ -735,9 +706,6 @@ test-dependabot-pr: clean-venv ## test a Dependabot PR (install deps + run all c
 	@echo "   gh pr merge <PR#> --squash"
 	@echo ""
 
-merge-dependabot-prs: ## merge all open Dependabot PRs
-	bash scripts/merge_dependabot_prs.sh
-
 cdk-ls: node_modules .venv ## list all CDK stacks
 	$(eval CDK := $(shell find . -type f -name cdk))
 	( \
@@ -806,7 +774,7 @@ clean-cache: ## clean python and pytest cache data
 	@find . -type d -name __pycache__ -not -path "./.venv/*" -exec rm -rf {} + 2>/dev/null || true
 	@rm -rf .pytest_cache
 
-.PHONY: help black black-check pylint mypy shellcheck unit unit-update-golden integration static static-check test-dependabot-pr merge-dependabot-prs cdk-ls cdk-diff cdk-diff-all cdk-deploy cdk-deploy-all cdk-destroy cdk-bootstrap clean-cache clean-venv update_cdk_libs
+.PHONY: help black black-check pylint mypy shellcheck unit unit-update-golden integration static static-check test-dependabot-pr cdk-ls cdk-diff cdk-diff-all cdk-deploy cdk-deploy-all cdk-destroy cdk-bootstrap clean-cache clean-venv update_cdk_libs
 ```
 
 ### Go Makefile Template
@@ -848,16 +816,13 @@ unit-update-golden: ## update golden files
 integration: ## run integration tests (requires credentials)
 	go test -v ./...
 
-test-dependabot-pr: ## test a Dependabot PR (run all checks)
-	$(MAKE) static
-	@echo "✓ All checks passed — ready to merge"
-
-merge-dependabot-prs: ## merge all open Dependabot PRs
-	bash scripts/merge_dependabot_prs.sh
-
 static: goimports fmt vet lint gocyclo govulncheck shellcheck unit ## run all static checks
 
-.PHONY: help goimports fmt vet lint gocyclo govulncheck shellcheck unit unit-update-golden integration test-dependabot-pr merge-dependabot-prs static
+clean-cache: ## clean Go test and build cache
+	go clean -testcache
+	go clean -cache
+
+.PHONY: help goimports fmt vet lint gocyclo govulncheck shellcheck unit unit-update-golden integration static clean-cache
 ```
 
 ### Rust Makefile Template
@@ -896,94 +861,12 @@ unit-update-golden: ## update golden files (if using goldie or similar)
 integration: ## run integration tests
 	cargo test --test '*'
 
-test-dependabot-pr: ## test a Dependabot PR (run all checks)
-	$(MAKE) static
-	@echo "✓ All checks passed — ready to merge"
-
-merge-dependabot-prs: ## merge all open Dependabot PRs
-	bash scripts/merge_dependabot_prs.sh
-
 static: fmt-check clippy dead-code audit shellcheck unit ## run all static checks
 
-.PHONY: help fmt fmt-check clippy dead-code audit shellcheck unit unit-update-golden integration test-dependabot-pr merge-dependabot-prs static
-```
+clean-cache: ## clean Rust build artifacts
+	cargo clean
 
-### scripts/merge_dependabot_prs.sh Template
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Merge all open Dependabot PRs.
-# GitHub Actions PRs: check out branch, run scripts/update_sha_pins.sh if present,
-#   commit any changes, push, then queue for auto-merge.
-# pip/npm PRs: run make test-dependabot-pr first; skip on failure.
-# Conflicting PRs: skip with a warning, continue to next PR.
-
-ORIGINAL_BRANCH=$(git branch --show-current)
-
-cleanup() {
-    git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
-}
-trap cleanup EXIT
-
-mapfile -t PR_LIST < <(gh pr list \
-    --author "dependabot[bot]" \
-    --json number,title,headRefName,mergeable \
-    --jq '.[] | @json')
-
-if [ "${#PR_LIST[@]}" -eq 0 ]; then
-    echo "No open Dependabot PRs found."
-    exit 0
-fi
-
-for pr_json in "${PR_LIST[@]}"; do
-    pr_number=$(printf '%s\n' "$pr_json" | jq -r '.number')
-    pr_title=$(printf '%s\n' "$pr_json" | jq -r '.title')
-    head_ref=$(printf '%s\n' "$pr_json" | jq -r '.headRefName')
-    mergeable=$(printf '%s\n' "$pr_json" | jq -r '.mergeable')
-
-    echo ""
-    echo "=== PR #${pr_number}: ${pr_title} ==="
-
-    if [ "$mergeable" = "CONFLICTING" ]; then
-        echo "⚠️  Skipping PR #${pr_number}: merge conflict"
-        continue
-    fi
-
-    if printf '%s\n' "$head_ref" | grep -q "^dependabot/github-actions"; then
-        echo "Type: GitHub Actions — checking out branch to update SHA pins..."
-        gh pr checkout "$pr_number"
-
-        if [ -x scripts/update_sha_pins.sh ]; then
-            bash scripts/update_sha_pins.sh
-        fi
-
-        if ! git diff --quiet; then
-            git add .github/workflows/
-            git commit -m "chore: update SHA pin comments"
-            git push
-        fi
-
-        git checkout "$ORIGINAL_BRANCH"
-
-    elif printf '%s\n' "$head_ref" | grep -qE "^dependabot/(pip|npm)"; then
-        echo "Type: pip/npm — running make test-dependabot-pr..."
-        if ! make test-dependabot-pr; then
-            echo "⚠️  Skipping PR #${pr_number}: tests failed"
-            continue
-        fi
-    fi
-
-    if ! gh pr merge "$pr_number" --squash --auto; then
-        echo "⚠️  Failed to queue PR #${pr_number} for auto-merge"
-        continue
-    fi
-    echo "✓ PR #${pr_number} queued for auto-merge"
-done
-
-echo ""
-echo "Done."
+.PHONY: help fmt fmt-check clippy dead-code audit shellcheck unit unit-update-golden integration static clean-cache
 ```
 
 ### .pre-commit-config.yaml Template
