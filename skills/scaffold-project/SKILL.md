@@ -5,11 +5,7 @@ description: Initialize project with opinionated standards - pinned dependencies
 
 # Project Scaffolding Skill
 
-This skill creates complete project scaffolding with opinionated, battle-tested standards. It enforces specific requirements for static analysis, testing, security scanning, and CI/CD.
-
 ## MANDATORY REQUIREMENTS
-
-These requirements MUST be enforced in every project. Do not skip or modify these rules.
 
 ### Rule 1: Pin All Dependency Versions
 
@@ -47,13 +43,7 @@ Every project MUST have a Makefile with language-specific static analysis target
 - `clean-cache` - Delete `__pycache__`, `.pyc`/`.pyo` files, and `.pytest_cache`
 - `clean-venv` - Alias for `clean-cache` then re-creates `.venv`
 
-**Required in requirements.txt:**
-```
-black==24.10.0
-pylint==3.3.2
-pytest==8.3.4
-mypy==1.13.0
-```
+**Required in requirements.txt:** `black`, `pylint`, `pytest`, `mypy` — exact versions (looked up in Step 2).
 
 #### Go Projects
 
@@ -97,9 +87,6 @@ mypy==1.13.0
 - `audit` - Run cargo audit
 - `shellcheck` - Check shell scripts
 - `static` - Run all checks: `static: fmt-check clippy dead-code unit audit shellcheck`
-- `unit` - Run tests
-- `audit` - Run cargo audit
-- `static` - Run all checks: `static: fmt-check clippy dead-code unit audit`
 
 #### Universal Tool (All Languages)
 
@@ -186,6 +173,59 @@ test-dependabot-pr: clean-venv
 	@echo "   make cdk-diff-all"
 ```
 
+### Rule 8: Packer Projects (Conditional)
+
+If Packer is detected (presence of `*.pkr.hcl` files), add these targets:
+
+**Packer Version Management:**
+- Pin `PACKER_VERSION` variable to exact version (e.g., `1.15.4`)
+- Install packer into local `bin/packer/$(PACKER_VERSION)/packer` — never rely on system packer
+- Install target fetches via pipeline-scripts: `curl --silent "https://raw.githubusercontent.com/natemarks/pipeline-scripts/v0.0.39/scripts/install_packer.sh" | bash -s -- -d bin/packer -r $(PACKER_VERSION)`
+- Add `bin/packer/` to `.gitignore`
+
+**Required Variables:**
+```makefile
+PACKER_VERSION := 1.15.4
+PACKER_TEMPLATE := <name>.pkr.hcl
+COMMIT := $(shell git rev-parse HEAD)
+EC2_IP = $(shell aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=<prefix>_$(COMMIT)" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[*].Instances[*].[PublicIpAddress]' \
+  --output text | egrep -v 'None')
+```
+The `<prefix>` matches the AMI name prefix in the template (e.g., `aware`). `EC2_IP` is used by `packer_debug_ssh` to find the paused debug instance.
+
+**Required Makefile Targets:**
+- `bin/packer/$(PACKER_VERSION)/packer` — auto-download packer to local bin dir (prerequisite for other targets)
+- `packer_format` — `packer fmt <template>` (auto-format)
+- `packer_format_check` — `packer fmt -check <template>` (CI check, no modification)
+- `packer_validate` — init plugins + `packer validate -var=... <template>`; removes plugin cache before init to avoid stale plugin issues
+- `packer_debug` — debug build: depends on `git-status`; runs `PACKER_LOG=1 packer build -debug -var=... <template>`; pauses after each step and writes a `.pem` key file
+- `packer_debug_ssh` — SSH into the paused debug instance: `ssh -i ./<source_name>.pem ec2-user@$(EC2_IP)`
+- `packer_publish` — production build: depends on `git-status`; removes plugin cache, inits, builds with extended polling (`AWS_POLL_DELAY_SECONDS=15 AWS_MAX_ATTEMPTS=240`)
+- `packer_cleanup` — dry-run cleanup of orphaned packer resources (instances, AMIs, snapshots)
+- `packer_cleanup_force` — `DRY_RUN=false` cleanup
+- `git-status` — guard that fails if working tree is dirty (required before builds that edit files)
+- `undo_edits` — `git reset HEAD --hard && git clean -f` to restore working tree after a build
+
+**Add to static checks:**
+```makefile
+static-check: black-check mypy shellcheck pylint packer_validate packer_format_check unit
+static: black mypy shellcheck pylint packer_validate packer_format unit
+```
+
+**Debug Workflow (how `packer_debug` and `packer_debug_ssh` work together):**
+
+`packer build -debug` pauses after each provisioner step and waits for the user to press Enter. When it launches the EC2 instance it writes a private key file named `<source_block_name>.pem` (e.g., `ec2_al2_ecs_optimized.pem`) to the working directory. The instance is tagged with `Name=<prefix>_$(COMMIT)` via `run_tags` in the HCL template. `EC2_IP` queries that tag to find the instance's public IP, so `make packer_debug_ssh` can connect immediately without any manual IP lookup.
+
+Typical debug session:
+1. `make packer_debug` — start the debug build (another terminal or after first pause)
+2. `make packer_debug_ssh` — SSH in to inspect state between steps
+3. Press Enter in the packer terminal to advance to the next step
+4. `make undo_edits` — restore working tree when done
+
+**SSH username convention:** Amazon Linux instances use `ec2-user`; Ubuntu uses `ubuntu`. Match the `ssh_username` in the HCL template.
+
 ---
 
 ## INTERVIEW PHASE
@@ -238,6 +278,19 @@ git config --local init.defaultBranch main
 **If Yes, ask:** "Which language is the CDK app written in?" (Usually Python or TypeScript)
 
 **Provide context:** "CDK projects get additional make targets for infrastructure management."
+
+### Question 2b: Packer Project?
+**Ask:** "Does this project build AMIs with Packer?"
+**Options:** Yes / No
+
+**If Yes, ask:**
+- "What is the Packer template filename?" (e.g., `myapp.pkr.hcl`)
+- "What Packer version should this project use?" (default: `1.15.4`)
+- "What is the AMI name prefix used in the template?" (e.g., `myapp` — used for `EC2_IP` tag lookup during debug builds)
+- "What is the SSH source block name in the template?" (e.g., `ec2_al2_ecs_optimized` — determines the `.pem` filename written during debug builds)
+- "What SSH username does the base AMI use?" (default: `ec2-user` for Amazon Linux, `ubuntu` for Ubuntu)
+
+**Provide context:** "Packer projects get targets for format, validate, debug builds (with SSH access to the build instance), and production publish."
 
 ### Question 3: Python Version (if Python detected)
 **Ask:** "Which Python version should this project use?"
@@ -479,6 +532,35 @@ chmod +x scripts/*.sh
 - [ ] Scripts are executable
 - [ ] Scripts are shell-checked
 
+### Step 7b: Packer Targets (if Packer project)
+
+**Add to Makefile:**
+1. Add packer variables at the top (PACKER_VERSION, PACKER_TEMPLATE, EC2_IP)
+2. Add `bin/packer/$(PACKER_VERSION)/packer` download target
+3. Add `packer_format`, `packer_format_check`, `packer_validate` targets
+4. Add `git-status` and `undo_edits` guards
+5. Add `packer_debug` and `packer_debug_ssh` targets
+6. Add `packer_publish` target
+7. Add `packer_cleanup` and `packer_cleanup_force` targets
+8. Update `static` and `static-check` to include `packer_validate` and `packer_format_check`/`packer_format`
+9. Add `.PHONY` declarations for all new targets
+
+**Add to `.gitignore`:**
+```
+bin/packer/
+*.pem
+manifest.json
+```
+(`.pem` files are written by `packer build -debug` and must not be committed)
+
+**Verification:**
+- [ ] `PACKER_VERSION`, `PACKER_TEMPLATE`, `COMMIT`, `EC2_IP` variables defined
+- [ ] Packer download target uses local bin dir
+- [ ] `packer_debug` depends on `git-status`
+- [ ] `packer_publish` depends on `git-status`
+- [ ] `packer_validate` and `packer_format_check` in `static-check`
+- [ ] `.pem` and `bin/packer/` in `.gitignore`
+
 ### Step 8: Install Pre-commit Hooks
 
 **For Python projects:**
@@ -506,6 +588,8 @@ Run through this checklist. If ANY item fails, FIX IT before completing.
 - [ ] `make static` target exists and includes all checks
 - [ ] Test targets exist: `unit`, `unit-update-golden`, `integration`
 - [ ] CDK targets exist (if CDK project)
+- [ ] Packer targets exist (if Packer project): `packer_validate`, `packer_format`, `packer_format_check`, `packer_debug`, `packer_debug_ssh`, `packer_publish`, `git-status`, `undo_edits`
+- [ ] `packer_validate` and `packer_format_check` included in `static-check` (if Packer project)
 
 **Dependencies:**
 - [ ] All versions pinned (no ranges)
@@ -538,6 +622,7 @@ Created/Updated:
 - .github/workflows/static-check.yml
 - CLAUDE.md with project standards
 [- scripts/ directory with CDK helper scripts] (if CDK)
+[- Packer targets: packer_debug, packer_debug_ssh, packer_publish] (if Packer)
 
 Next steps:
 1. Review the generated files
@@ -551,6 +636,8 @@ All dependencies are pinned and static analysis is configured!
 ---
 
 ## TEMPLATES
+
+> **REFERENCE ONLY** — consult during scaffolding steps; not a checklist to run top-to-bottom.
 
 ### Python Makefile Template
 
@@ -776,6 +863,97 @@ clean-cache: ## clean python and pytest cache data
 
 .PHONY: help black black-check pylint mypy shellcheck unit unit-update-golden integration static static-check test-dependabot-pr cdk-ls cdk-diff cdk-diff-all cdk-deploy cdk-deploy-all cdk-destroy cdk-bootstrap clean-cache clean-venv update_cdk_libs
 ```
+
+### Packer Makefile Additions Template
+
+Add these variables and targets to a Python or Python+CDK Makefile when Packer is present. Substitute `{{PACKER_TEMPLATE}}` with the actual `.pkr.hcl` filename, `{{AMI_PREFIX}}` with the AMI name prefix, `{{SSH_SOURCE_NAME}}` with the source block name (determines `.pem` filename), and `{{SSH_USER}}` with the SSH username.
+
+```makefile
+PACKER_VERSION := 1.15.4
+PACKER_TEMPLATE := {{PACKER_TEMPLATE}}
+COMMIT := $(shell git rev-parse HEAD)
+EC2_IP = $(shell aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values={{AMI_PREFIX}}_$(COMMIT)" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[*].Instances[*].[PublicIpAddress]' \
+  --output text | egrep -v 'None')
+
+git-status: ## require clean working tree (build process edits files)
+	@status=$$(git status --porcelain); \
+	if [ ! -z "$${status}" ]; \
+	then \
+		echo "Error - working directory is dirty. Commit those changes!"; \
+		exit 1; \
+	fi
+
+undo_edits: ## restore working tree after a build (reverses any file edits made during build)
+	git reset HEAD --hard
+	git clean -f
+
+bin/packer/$(PACKER_VERSION)/packer: ## install packer into local bin dir
+	bash -c 'curl --silent "https://raw.githubusercontent.com/natemarks/pipeline-scripts/v0.0.39/scripts/install_packer.sh" | bash -s -- -d bin/packer -r $(PACKER_VERSION)'
+
+packer_format: bin/packer/$(PACKER_VERSION)/packer ## format packer template
+	bin/packer/$(PACKER_VERSION)/packer fmt $(PACKER_TEMPLATE)
+
+packer_format_check: bin/packer/$(PACKER_VERSION)/packer ## check packer template formatting (no modification)
+	bin/packer/$(PACKER_VERSION)/packer fmt -check $(PACKER_TEMPLATE)
+
+packer_validate: bin/packer/$(PACKER_VERSION)/packer ## validate packer template
+	rm -rf $${HOME}/.config/packer/plugins/github.com/hashicorp/amazon; \
+	bin/packer/$(PACKER_VERSION)/packer init $(PACKER_TEMPLATE); \
+	bin/packer/$(PACKER_VERSION)/packer validate \
+	-var="region=us-east-1" \
+	-var="version=$(COMMIT)" $(PACKER_TEMPLATE)
+
+packer_debug: git-status bin/packer/$(PACKER_VERSION)/packer ## debug build: pauses after each step, writes .pem key file
+	PACKER_LOG=1 bin/packer/$(PACKER_VERSION)/packer build -debug \
+	-var="region=us-east-1" \
+	-var="version=$(COMMIT)" \
+	$(PACKER_TEMPLATE)
+
+packer_debug_ssh: ## ssh into the paused debug build instance
+	ssh -i ./{{SSH_SOURCE_NAME}}.pem {{SSH_USER}}@$(EC2_IP)
+
+packer_publish: git-status bin/packer/$(PACKER_VERSION)/packer ## build and publish the AMI (production)
+	[[ -e manifest.json ]] && rm -f manifest.json; \
+	rm -rf $${HOME}/.config/packer/plugins/github.com/hashicorp/amazon; \
+	bin/packer/$(PACKER_VERSION)/packer init $(PACKER_TEMPLATE); \
+	AWS_POLL_DELAY_SECONDS=15 \
+	AWS_MAX_ATTEMPTS=240 \
+	PACKER_LOG=1 bin/packer/$(PACKER_VERSION)/packer build \
+	-var="region=us-east-1" \
+	-var="version=$(COMMIT)" \
+	$(PACKER_TEMPLATE);
+
+packer_cleanup: ## check for orphaned packer resources (dry run)
+	@echo "Checking for orphaned Packer artifacts..."
+	bash scripts/cleanup_packer_artifacts.sh
+
+packer_cleanup_force: ## delete orphaned packer resources
+	@echo "Cleaning up orphaned Packer artifacts..."
+	DRY_RUN=false bash scripts/cleanup_packer_artifacts.sh
+```
+
+**Update static targets to include packer checks:**
+```makefile
+static-check: black-check mypy shellcheck pylint packer_validate packer_format_check unit
+
+static: black mypy shellcheck pylint packer_validate packer_format unit
+```
+
+**Add to `.PHONY`:**
+```makefile
+.PHONY: ... git-status undo_edits packer_format packer_format_check packer_validate packer_debug packer_debug_ssh packer_publish packer_cleanup packer_cleanup_force
+```
+
+**Notes:**
+- `packer_debug` and `packer_publish` both require `git-status` because the build process edits files; `undo_edits` restores them
+- The `.pem` file written by `-debug` mode is named after the HCL source block: `source "amazon-ebs" "{{SSH_SOURCE_NAME}}"` → `{{SSH_SOURCE_NAME}}.pem`
+- `EC2_IP` finds the running instance by the `Name` run_tag set in the HCL template (must match `{{AMI_PREFIX}}_$(COMMIT)`)
+- Plugin cache (`~/.config/packer/plugins/`) is cleared before each `init` to avoid stale plugin issues
+- If CDK manages the packer build VPC, `packer_publish` should also depend on `cdk-pkr-vpc`
+
+---
 
 ### Go Makefile Template
 
@@ -1114,6 +1292,22 @@ jobs:
 - Document fix process in DEPENDABOT.md
 - Consider `test-dependabot-pr` target for local testing
 
+**Packer debug workflow:**
+- `packer build -debug` pauses before each provisioner step and waits for Enter
+- It writes `<source_name>.pem` to the working dir on first pause (instance is up and ready)
+- While paused, `make packer_debug_ssh` connects using that PEM + the `EC2_IP` lookup
+- Advance the build by pressing Enter in the packer terminal
+- If `EC2_IP` returns empty: verify the `run_tags` block in the HCL uses `Name = "<prefix>_${var.version}"` and that COMMIT matches
+- When done (success or abort), run `make undo_edits` to clean up edits the build made
+
+**Packer validate fails in CI:**
+- `packer validate` calls `packer init` which downloads plugins — CI runners must have internet access or pre-cached plugins
+- The plugin cache purge (`rm -rf ~/.config/packer/plugins/...`) before init avoids "wrong version" errors after plugin upgrades
+
+**Packer build stuck / orphaned resources:**
+- Use `make packer_cleanup` (dry run) then `make packer_cleanup_force` to remove instances, AMIs, and snapshots left by failed builds
+- Requires `scripts/cleanup_packer_artifacts.sh` to be implemented in the project
+
 ### Best Practices
 
 1. **Start minimal, add complexity later** - Don't overwhelm new projects
@@ -1144,19 +1338,3 @@ jobs:
 - Test infrastructure changes: `make cdk-diff-all`
 - Consider `cdk-nag` for security/compliance checks
 
----
-
-## SUCCESS CRITERIA
-
-Skill execution is complete when:
-
-- [ ] All required files created/updated
-- [ ] All dependencies pinned
-- [ ] `make help` works
-- [ ] `make static` runs (even if fails due to no tests)
-- [ ] Pre-commit hooks installed
-- [ ] GitHub Actions workflow valid
-- [ ] CLAUDE.md documents standards
-- [ ] User understands next steps
-
-Report completion with summary of what was created and next steps.
