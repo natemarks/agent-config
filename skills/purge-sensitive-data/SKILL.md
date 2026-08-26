@@ -129,9 +129,78 @@ Generate a bash script named `purge-sensitive-data.sh` in the user's specified o
 6. Require explicit confirmation before force-pushing
 7. Print collaborator instructions after push
 
+### Filling in the Placeholders
+
+Before generating the script, resolve each placeholder from the interview:
+
+**`{{REPO_OWNER_REPO}}`** — the `owner/repo` value from the interview.
+
+**`{{IF_REPLACEMENTS_BLOCK}}` / `{{END_IF_REPLACEMENTS_BLOCK}}`** — include this block only if the user is doing text pattern replacement (modes 2 or 3). Remove the block entirely for path-only purges.
+
+**`{{REPLACEMENT_LABELS_LOG}}`** — one `log` line per replacement label (NOT the value). Example:
+```bash
+log "  - STRIPE_API_KEY"
+log "  - DB_PASSWORD_STAGING"
+```
+
+**`{{REPLACEMENTS_CONTENT}}`** — the actual `replacements.txt` content, one line per entry:
+```
+LITERAL:actual_secret_value==>***REMOVED***
+LITERAL:another_secret==>***REMOVED***
+```
+Use `LITERAL:` prefix (not `regex:`) for exact secret strings. If the user wants regex, use `regex:pattern==>replacement`.
+
+**`{{FILTER_REPO_COMMANDS}}`** — the actual `git-filter-repo` invocations. Generate based on what the user needs:
+
+For path removal only:
+```bash
+# Remove each path from history
+# If a file was renamed, run once per historical path
+run_cmd git-filter-repo --sensitive-data-removal \
+    --invert-paths \
+    --path "path/to/file.txt"
+```
+
+For multiple paths, use multiple `--path` arguments in a single call:
+```bash
+run_cmd git-filter-repo --sensitive-data-removal \
+    --invert-paths \
+    --path "secrets.env" \
+    --path "config/prod.yaml" \
+    --path "logs/"
+```
+
+For text replacement only:
+```bash
+run_cmd git-filter-repo --sensitive-data-removal \
+    --replace-text "$REPLACEMENTS_FILE"
+```
+
+For both path removal AND text replacement, run as two separate commands:
+```bash
+# First: remove files from history
+run_cmd git-filter-repo --sensitive-data-removal \
+    --invert-paths \
+    --path "secrets.env"
+
+# Second: replace any remaining text patterns
+run_cmd git-filter-repo --sensitive-data-removal \
+    --replace-text "$REPLACEMENTS_FILE"
+```
+
+**`{{SUPPORT_CASE_DATA_DESCRIPTION}}`** — a human-readable description of what was removed. Use labels, not actual values. Example:
+```
+The following types of sensitive data were removed from all commits in the repository history:
+
+- File path `secrets.env` (contained hardcoded AWS credentials)
+- File path `logs/staging/logs.txt` (contained KMS key ARNs and account IDs)
+- Text pattern: STRIPE_API_KEY — replaced with placeholder in all commits
+- Text pattern: DB_PASSWORD_STAGING — replaced with placeholder in all commits
+```
+
 ### Script Template
 
-Generate the following script, substituting values from the interview:
+Generate the following script with all placeholders substituted:
 
 ```bash
 #!/usr/bin/env bash
@@ -404,84 +473,14 @@ echo "  - $LOG_FILE          — full command log for GitHub Support"
 echo "  - $SUPPORT_CASE_FILE — GitHub Support case document"
 ```
 
-### Filling in the Template Placeholders
-
-When generating the script, substitute:
-
-**`{{REPO_OWNER_REPO}}`** — the `owner/repo` value from the interview.
-
-**`{{IF_REPLACEMENTS_BLOCK}}` / `{{END_IF_REPLACEMENTS_BLOCK}}`** — include this block only if the user is doing text pattern replacement (modes 2 or 3). Remove the block entirely for path-only purges.
-
-**`{{REPLACEMENT_LABELS_LOG}}`** — one `log` line per replacement label (NOT the value). Example:
-```bash
-log "  - STRIPE_API_KEY"
-log "  - DB_PASSWORD_STAGING"
-```
-
-**`{{REPLACEMENTS_CONTENT}}`** — the actual `replacements.txt` content, one line per entry:
-```
-LITERAL:actual_secret_value==>***REMOVED***
-LITERAL:another_secret==>***REMOVED***
-```
-Use `LITERAL:` prefix (not `regex:`) for exact secret strings. If the user wants regex, use `regex:pattern==>replacement`.
-
-**`{{FILTER_REPO_COMMANDS}}`** — the actual `git-filter-repo` invocations. Generate based on what the user needs:
-
-For path removal only:
-```bash
-# Remove each path from history
-# If a file was renamed, run once per historical path
-run_cmd git-filter-repo --sensitive-data-removal \
-    --invert-paths \
-    --path "path/to/file.txt"
-```
-
-For multiple paths, use multiple `--path` arguments in a single call:
-```bash
-run_cmd git-filter-repo --sensitive-data-removal \
-    --invert-paths \
-    --path "secrets.env" \
-    --path "config/prod.yaml" \
-    --path "logs/"
-```
-
-For text replacement only:
-```bash
-run_cmd git-filter-repo --sensitive-data-removal \
-    --replace-text "$REPLACEMENTS_FILE"
-```
-
-For both path removal AND text replacement, run as two separate commands:
-```bash
-# First: remove files from history
-run_cmd git-filter-repo --sensitive-data-removal \
-    --invert-paths \
-    --path "secrets.env"
-
-# Second: replace any remaining text patterns
-run_cmd git-filter-repo --sensitive-data-removal \
-    --replace-text "$REPLACEMENTS_FILE"
-```
-
-**`{{SUPPORT_CASE_DATA_DESCRIPTION}}`** — a human-readable description of what was removed. Use labels, not actual values. Example:
-```
-The following types of sensitive data were removed from all commits in the repository history:
-
-- File path `secrets.env` (contained hardcoded AWS credentials)
-- File path `logs/staging/logs.txt` (contained KMS key ARNs and account IDs)
-- Text pattern: STRIPE_API_KEY — replaced with placeholder in all commits
-- Text pattern: DB_PASSWORD_STAGING — replaced with placeholder in all commits
-```
-
 ---
 
 ## REVIEW & EXECUTION PHASE
 
 After generating the script:
 
-1. Write the script to `purge-sensitive-data.sh` in the current directory (or the user's specified output dir).
-2. Make it executable: `chmod +x purge-sensitive-data.sh`
-3. Present the script to the user:
+1. Write the script to `purge-sensitive-data.sh` (or the user's specified output dir) and make it executable: `chmod +x purge-sensitive-data.sh`
+2. Present the script to the user:
    ```
    Script written to: purge-sensitive-data.sh
 
@@ -496,7 +495,7 @@ After generating the script:
    The script will pause for confirmation before force-pushing.
    ```
 
-4. Tell the user what the script will produce:
+3. Tell the user what the script will produce:
    ```
    When run, the script creates a `purge-log-TIMESTAMP/` directory containing:
    - purge-commands.log        — full audit log of every command + output
