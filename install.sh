@@ -30,7 +30,7 @@ for TARGET_DIR in "$@"; do
     # Copy skills to target
     # Use rsync if available for better output, otherwise fall back to cp
     if command -v rsync >/dev/null 2>&1; then
-        rsync -av --delete "$SKILLS_SOURCE/" "$TARGET_DIR/"
+        rsync -av "$SKILLS_SOURCE/" "$TARGET_DIR/"
     else
         cp -rv "$SKILLS_SOURCE/"* "$TARGET_DIR/"
     fi
