@@ -22,6 +22,7 @@ For each finding record:
 - **title** — one concise sentence naming the issue (no severity prefix)
 - **severity** — one of: `critical`, `high`, `medium`, `low`, `informational` (see Severity Reference)
 - **purge** — true if sensitive data (secrets, credentials, tokens, private keys) is present in git history (not merely in the working tree)
+- **source** — `FILE:LINE_START-LINE_END` (the file path from Step 1 and the line range covering this finding)
 - **details** — full technical context: affected component, location, evidence, conditions
 - **remediation** — recommended fix
 - **references** — CVEs, CWEs, links, or "None"
@@ -97,6 +98,10 @@ REMEDIATION
 ## References
 
 REFERENCES
+
+## Source
+
+SOURCE
 ```
 
 The bracketed lines above are conditional: include them only when `purge: true`.
