@@ -561,6 +561,30 @@ manifest.json
 - [ ] `packer_validate` and `packer_format_check` in `static-check`
 - [ ] `.pem` and `bin/packer/` in `.gitignore`
 
+### Step 7c: Create scratch.txt and Update .gitignore
+
+**Create `scratch.txt` in the project root (all projects):**
+
+```bash
+touch scratch.txt
+```
+
+**Add `scratch.txt` to `.gitignore`:**
+
+1. If `.gitignore` does not exist, create it:
+```
+scratch.txt
+```
+
+2. If `.gitignore` exists, check whether `scratch.txt` is already listed. If not, append:
+```
+scratch.txt
+```
+
+**Verification:**
+- [ ] `scratch.txt` exists in the project root
+- [ ] `scratch.txt` is listed in `.gitignore`
+
 ### Step 8: Install Pre-commit Hooks
 
 **For Python projects:**
@@ -602,6 +626,8 @@ Run through this checklist. If ANY item fails, FIX IT before completing.
 - [ ] `.github/dependabot.yml` exists
 - [ ] `.github/workflows/static-check.yml` exists
 - [ ] CLAUDE.md exists and documents standards
+- [ ] `scratch.txt` exists in project root
+- [ ] `scratch.txt` is listed in `.gitignore`
 
 **Functional Verification:**
 - [ ] Run `make static` - should work without errors (or document expected failures)
