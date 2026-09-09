@@ -158,7 +158,7 @@ If CDK detected (presence of `cdk.json` or `app.py` with CDK imports), add these
 **Key Details:**
 - All CDK targets depend on `node_modules` and `.venv`
 - CDK executable: `$(shell find . -type f -name cdk)`
-- Pin Python version (e.g., `3.10.6`) and CDK version (e.g., `2.70.0`)
+- Pin Python version (e.g., `3.10.6`) and CDK version (e.g., `2.200.0`)
 - All targets source `scripts/enable_pyenv.sh` for Python environment
 - Default `app_env` is `dev`, overridable on command line
 - Create `scripts/update_cdk_libs.sh` for syncing CDK CLI + library versions
@@ -178,14 +178,14 @@ test-dependabot-pr: clean-venv
 If Packer is detected (presence of `*.pkr.hcl` files), add these targets:
 
 **Packer Version Management:**
-- Pin `PACKER_VERSION` variable to exact version (e.g., `1.15.4`)
+- Pin `PACKER_VERSION` variable to exact version (e.g., `1.16.0`)
 - Install packer into local `bin/packer/$(PACKER_VERSION)/packer` — never rely on system packer
 - Install target fetches via pipeline-scripts: `curl --silent "https://raw.githubusercontent.com/natemarks/pipeline-scripts/v0.0.39/scripts/install_packer.sh" | bash -s -- -d bin/packer -r $(PACKER_VERSION)`
 - Add `bin/packer/` to `.gitignore`
 
 **Required Variables:**
 ```makefile
-PACKER_VERSION := 1.15.4
+PACKER_VERSION := 1.16.0
 PACKER_TEMPLATE := <name>.pkr.hcl
 COMMIT := $(shell git rev-parse HEAD)
 EC2_IP = $(shell aws ec2 describe-instances \
@@ -285,7 +285,7 @@ git config --local init.defaultBranch main
 
 **If Yes, ask:**
 - "What is the Packer template filename?" (e.g., `myapp.pkr.hcl`)
-- "What Packer version should this project use?" (default: `1.15.4`)
+- "What Packer version should this project use?" (default: `1.16.0`)
 - "What is the AMI name prefix used in the template?" (e.g., `myapp` — used for `EC2_IP` tag lookup during debug builds)
 - "What is the SSH source block name in the template?" (e.g., `ec2_al2_ecs_optimized` — determines the `.pem` filename written during debug builds)
 - "What SSH username does the base AMI use?" (default: `ec2-user` for Amazon Linux, `ubuntu` for Ubuntu)
@@ -355,11 +355,11 @@ Execute these steps IN ORDER. Verify each step before proceeding.
 2. Get latest versions from PyPI: `curl -s https://pypi.org/pypi/<package>/json | jq -r '.info.version'`
 3. Replace ranges with exact pins (`==`)
 4. Ensure these are present and pinned:
-   - `black==24.10.0`
-   - `pylint==3.3.2`
-   - `pytest==8.3.4`
-   - `mypy==1.13.0`
-   - `pre-commit==4.0.1`
+   - `black==26.5.1`
+   - `pylint==4.0.8`
+   - `pytest==9.1.1`
+   - `mypy==2.3.1`
+   - `pre-commit==4.6.2`
 5. Order logically (main deps first, then dev tools)
 
 **For Node.js (package.json):**
@@ -397,7 +397,7 @@ Use template from TEMPLATES section. Always include:
 
 **Add to requirements.txt (Python projects):**
 ```
-pre-commit==4.0.1
+pre-commit==4.6.2
 ```
 
 **Verification:**
@@ -895,7 +895,7 @@ clean-cache: ## clean python and pytest cache data
 Add these variables and targets to a Python or Python+CDK Makefile when Packer is present. Substitute `{{PACKER_TEMPLATE}}` with the actual `.pkr.hcl` filename, `{{AMI_PREFIX}}` with the AMI name prefix, `{{SSH_SOURCE_NAME}}` with the source block name (determines `.pem` filename), and `{{SSH_USER}}` with the SSH username.
 
 ```makefile
-PACKER_VERSION := 1.15.4
+PACKER_VERSION := 1.16.0
 PACKER_TEMPLATE := {{PACKER_TEMPLATE}}
 COMMIT := $(shell git rev-parse HEAD)
 EC2_IP = $(shell aws ec2 describe-instances \
@@ -1218,10 +1218,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '{{PYTHON_VERSION}}'
 
@@ -1245,12 +1245,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
-          go-version: '1.21'
+          go-version: '1.27.1'
 
       - name: Install tools
         run: |
@@ -1279,10 +1279,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0  # stable
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
