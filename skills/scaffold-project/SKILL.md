@@ -680,8 +680,8 @@ help: ## Show this help
 	source .venv/bin/activate && pip install --upgrade pip setuptools
 	source .venv/bin/activate && pip install -r requirements.txt
 
-clean-venv: clean-cache ## re-create virtual env
-	[[ -e .venv ]] && rm -rf .venv
+clean-venv: clean-cache ## rm .venv and re-create it
+	rm -rf .venv
 	$(MAKE) .venv
 
 black: .venv ## format python files
@@ -743,8 +743,8 @@ help: ## Show this help
 	   pip install -r requirements.txt; \
 	)
 
-clean-venv: clean-cache ## re-create virtual env
-	[[ -e .venv ]] && rm -rf .venv
+clean-venv: clean-cache ## rm .venv and re-create it
+	rm -rf .venv
 	$(MAKE) .venv
 
 node_modules: ## create node_modules if it doesn't exist
