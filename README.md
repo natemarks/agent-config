@@ -9,7 +9,8 @@ Simple deployment tool for Claude Code skills.
 ├── Makefile        # Build and deployment targets
 ├── install.sh      # Deployment script
 └── skills/         # Skills to deploy
-    └── scaffold-project/
+    ├── scaffold-project/
+    └── scaffold-terraform/
 ```
 
 ## Usage
