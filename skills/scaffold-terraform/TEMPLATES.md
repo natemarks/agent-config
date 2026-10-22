@@ -63,7 +63,7 @@ terraform {
     key            = "{{PROJECT_NAME}}/terraform.tfstate"
     region         = "{{STATE_REGION}}"
     encrypt        = true
-    dynamodb_table = "terraform-locks"
+    use_lockfile   = true # S3-native locking (Terraform 1.10 or newer)
   }
 }
 ```
@@ -127,7 +127,6 @@ MISE := mise exec --
 AWS_ACCOUNT_ID := {{AWS_ACCOUNT_ID}}
 STATE_BUCKET := {{STATE_BUCKET}}
 STATE_REGION := {{STATE_REGION}}
-LOCK_TABLE := terraform-locks
 
 help: ## Show this help
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##//'
@@ -142,8 +141,8 @@ install: preflight ## install the tool versions pinned in .mise.toml
 hooks: install ## install the git hooks (pre-commit runs make static)
 	$(MISE) pre-commit install
 
-bootstrap-state: install ## create the state bucket and lock table if missing (requires credentials; idempotent)
-	$(MISE) scripts/bootstrap-state.sh $(AWS_ACCOUNT_ID) $(STATE_BUCKET) $(STATE_REGION) $(LOCK_TABLE)
+bootstrap-state: install ## create the state bucket if missing (requires credentials; idempotent)
+	$(MISE) scripts/bootstrap-state.sh $(AWS_ACCOUNT_ID) $(STATE_BUCKET) $(STATE_REGION)
 
 fmt: install ## format terraform files
 	$(MISE) terraform fmt -recursive
@@ -277,24 +276,23 @@ The array guard matters: `xargs -r` exits 0 on empty input, which would let the 
 
 ### State bootstrap: scripts/bootstrap-state.sh
 
-Both layouts. `make bootstrap-state` creates the remote-state bucket and lock table once per AWS account, before the first `init`. It is idempotent: re-running reconciles settings and skips what exists. It needs credentials, so it stays out of `static`. Naming convention: bucket `<prefix>-terraform-state-<account-id>` (account-suffixed, globally unique), table `terraform-locks`.
+Both layouts. `make bootstrap-state` creates the remote-state S3 bucket once per AWS account, before the first `init`. It is idempotent: re-running reconciles settings and skips what exists. It needs credentials, so it stays out of `static`. Naming convention: bucket `<prefix>-terraform-state-<account-id>` (account-suffixed, globally unique). Locking is S3-native (`use_lockfile = true`, a `.tflock` object beside the state), so there is no DynamoDB table; the DynamoDB lock backend is deprecated.
 
-Best-practice settings applied: bucket versioning, default SSE (AES256 with bucket key), all public access blocked, bucket-owner-enforced ownership (ACLs off), TLS-only bucket policy, noncurrent versions expire after 90 days, incomplete multipart uploads abort after 7 days; table `LockID` (string) hash key, on-demand billing, point-in-time recovery, deletion protection, SSE. The script refuses to run when the caller's account differs from the expected one.
+Best-practice settings applied: bucket versioning, default SSE (AES256 with bucket key), all public access blocked, bucket-owner-enforced ownership (ACLs off), TLS-only bucket policy, noncurrent versions expire after 90 days, incomplete multipart uploads abort after 7 days. Versioning also protects the state and lock objects. The script refuses to run when the caller's account differs from the expected one.
 
 ```bash
 #!/usr/bin/env bash
-# Create the Terraform remote-state S3 bucket and DynamoDB lock table if missing (idempotent).
-# Usage: scripts/bootstrap-state.sh ACCOUNT_ID BUCKET REGION LOCK_TABLE
+# Create the Terraform remote-state S3 bucket if missing (idempotent).
+# Usage: scripts/bootstrap-state.sh ACCOUNT_ID BUCKET REGION
 set -euo pipefail
 
-if [ $# -ne 4 ]; then
-  echo "Usage: $0 ACCOUNT_ID BUCKET REGION LOCK_TABLE" >&2
+if [ $# -ne 3 ]; then
+  echo "Usage: $0 ACCOUNT_ID BUCKET REGION" >&2
   exit 2
 fi
 account_id=$1
 bucket=$2
 region=$3
-table=$4
 
 caller=$(aws sts get-caller-identity --query Account --output text)
 if [ "${caller}" != "${account_id}" ]; then
@@ -341,24 +339,7 @@ POLICY
 aws s3api put-bucket-lifecycle-configuration --bucket "${bucket}" \
   --lifecycle-configuration '{"Rules":[{"ID":"expire-noncurrent-and-abort-multipart","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}}]}'
 
-echo "== lock table ${table} (${region})"
-if aws dynamodb describe-table --table-name "${table}" --region "${region}" >/dev/null 2>&1; then
-  echo "exists"
-else
-  aws dynamodb create-table --table-name "${table}" --region "${region}" \
-    --attribute-definitions AttributeName=LockID,AttributeType=S \
-    --key-schema AttributeName=LockID,KeyType=HASH \
-    --billing-mode PAY_PER_REQUEST \
-    --deletion-protection-enabled \
-    --sse-specification Enabled=true >/dev/null
-  aws dynamodb wait table-exists --table-name "${table}" --region "${region}"
-fi
-aws dynamodb update-continuous-backups --table-name "${table}" --region "${region}" \
-  --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true >/dev/null
-aws dynamodb update-table --table-name "${table}" --region "${region}" \
-  --deletion-protection-enabled >/dev/null 2>&1 || true
-
-echo "state backend ready: s3://${bucket}, table ${table}"
+echo "state backend ready: s3://${bucket}"
 ```
 
 ## Terragrunt layout
@@ -372,7 +353,6 @@ aws_account_name: "{{ENV_NAME}}"
 
 terraform_state_bucket_region: "{{STATE_REGION}}"
 terraform_state_bucket_name: "{{STATE_BUCKET}}"
-terraform_state_bucket_dynamodb_table_name: "terraform-locks"
 ```
 
 ### env-common.yaml
@@ -441,7 +421,7 @@ remote_state {
     bucket                = local.account.terraform_state_bucket_name
     region                = local.account.terraform_state_bucket_region
     encrypt               = true
-    dynamodb_table        = local.account.terraform_state_bucket_dynamodb_table_name
+    use_lockfile          = true
     key                   = "{{ENV_NAME}}/${path_relative_to_include()}/terraform.tfstate"
     disable_bucket_update = true
   }
@@ -516,12 +496,11 @@ Also write `<env>/.terraform-version` and `<env>/.terragrunt-version` containing
 Same header (`MISE := mise exec --`), `help`, `preflight`, `install`, `hooks`, `pins`, `shellcheck`, `unit`, `unit-update-golden`, `integration` and `.PHONY` shape as the terraform Makefile. Replace the terraform-specific targets with:
 
 ```makefile
-bootstrap-state: install ## create an env's state bucket and lock table if missing (usage: make bootstrap-state env=<folder>; requires credentials)
+bootstrap-state: install ## create an env's state bucket if missing (usage: make bootstrap-state env=<folder>; requires credentials)
 	$(MISE) scripts/bootstrap-state.sh \
 	  "$$($(MISE) yq '.aws_account_id' $(env)/account.yaml)" \
 	  "$$($(MISE) yq '.terraform_state_bucket_name' $(env)/account.yaml)" \
-	  "$$($(MISE) yq '.terraform_state_bucket_region' $(env)/account.yaml)" \
-	  "$$($(MISE) yq '.terraform_state_bucket_dynamodb_table_name' $(env)/account.yaml)"
+	  "$$($(MISE) yq '.terraform_state_bucket_region' $(env)/account.yaml)"
 
 fmt: install ## format hcl files
 	$(MISE) terragrunt hcl fmt
@@ -549,7 +528,7 @@ static-check: preflight fmt-check validate security pins shellcheck ## run all s
 static: preflight fmt validate security pins shellcheck ## run all static checks with auto-format
 ```
 
-`terragrunt hcl validate` flags vary by version: confirm with `$(MISE) terragrunt hcl validate --help`, and run `make validate` without credentials. If it needs them, drop `validate` from `static` and `static-check` and leave it as a manual target. `plan` and `stack-generate` need credentials and stay out of `static`. Add `bootstrap-state stack-generate plan` to `.PHONY`. Environments sharing an account (an environment folder and its `aws-*-pipelines-bootstrap` folder) share one bucket and table, so bootstrap once per account.
+`terragrunt hcl validate` flags vary by version: confirm with `$(MISE) terragrunt hcl validate --help`, and run `make validate` without credentials. If it needs them, drop `validate` from `static` and `static-check` and leave it as a manual target. `plan` and `stack-generate` need credentials and stay out of `static`. Add `bootstrap-state stack-generate plan` to `.PHONY`. Environments sharing an account (an environment folder and its `aws-*-pipelines-bootstrap` folder) share one bucket, so bootstrap once per account.
 
 `scripts/for-each-env.sh`:
 ```bash
@@ -665,6 +644,10 @@ jobs:
 ## CLAUDE.md section
 
 ```markdown
+## Keep `make static` clean
+
+`make static` exits 0 at every step of a change. Run it after each edit to `.tf`, `.hcl`, `.sh`, `Makefile` or `.mise.toml`, and again before reporting work done. Fix a failure at its source: format with `make fmt`, pin the exact version, repair the script. When a check is wrong for this project, change the check in the Makefile, `.tflint.hcl` or `.betterleaksignore` and say why in the commit. Add a new `make static` target when you add a new kind of file or tool. `git add` new `*.sh` files so `shellcheck` sees them.
+
 ## Static Analysis & Testing Standards
 
 Enforced by the `scaffold-terraform` skill:
@@ -905,7 +888,7 @@ on:
         required: false
         type: string
       unlock_all:
-        description: "Forcibly reset all locks by deleting the DynamoDB table"
+        description: "Forcibly reset all locks"
         required: false
         type: boolean
 
@@ -980,4 +963,4 @@ Resolve `{{SCALE_CATALOG_TAG}}` from the latest `gruntwork-io/terragrunt-scale-c
   "Statement": [{ "Effect": "Allow", "Action": "*", "Resource": "*" }]
 }
 ```
-This is the working-but-broad default; tighten it after the first successful bootstrap (plan role: read-only plus state-bucket and lock-table access).
+This is the working-but-broad default; tighten it after the first successful bootstrap (plan role: read-only plus state-bucket access, including put/delete of `.tflock` objects).

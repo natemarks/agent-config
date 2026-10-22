@@ -29,9 +29,9 @@ Ask one question at a time, each with a line of context. Skip questions the repo
 
 0. **Git**: `test -d .git`. If absent, offer `git init && git config --local init.defaultBranch main` (make targets use `git ls-files`). On decline, stop.
 1. **Layout**: terraform or terragrunt?
-2. **Cloud**: AWS (default) or other. Non-AWS drops the S3/DynamoDB backend and `account.yaml` keys; ask for the backend instead.
+2. **Cloud**: AWS (default) or other. Non-AWS drops the S3 backend and `account.yaml` keys; ask for the backend instead.
 3. **Terraform version** and, for terragrunt, **Terragrunt version** (default: latest).
-4. **State backend** (AWS): region, bucket name prefix (bucket becomes `<prefix>-<account-id>`; terragrunt layout: one per account), and the AWS account id. The lock table is always `terraform-locks` (DynamoDB, as in `icp-iac-bedrock`; `use_lockfile` stays unused).
+4. **State backend** (AWS): region, bucket name prefix (bucket becomes `<prefix>-<account-id>`; terragrunt layout: one per account), and the AWS account id. Locking is S3-native (`use_lockfile = true`, Terraform ≥ 1.10): no DynamoDB table, since the DynamoDB lock backend is deprecated. `icp-iac-bedrock` still uses DynamoDB; new projects do not.
 5. **Providers** needed (default `aws`) and primary region.
 6. **Terragrunt layout only**:
    - Environment folder names, plus AWS account id and name for each.
@@ -63,7 +63,7 @@ Run in order; each step is done when its verification line holds.
    - One `aws-<env>-pipelines-bootstrap/` per AWS account. Done when each has `account.yaml`, `root.hcl`, `terragrunt.stack.hcl`, `plan_iam_policy.json`, `apply_iam_policy.json`.
    - Add `aws-*-pipelines-bootstrap/` to each environment's filter paths and to `paths-ignore` in plan/apply.
    - Report as manual follow-ups: run `make bootstrap-state env=<folder>` for each account, then run the bootstrap stack once per account with admin credentials (it creates the OIDC provider and the `-plan`/`-apply` roles), then tighten the policies from the `Action: "*"` starting point (plan should be read-only). Add the Slack webhook as a repo secret if enabled.
-9. **CLAUDE.md**: create or append the "Static Analysis & Testing Standards" section. Include: layout, how to plan/apply, how stack release tags are bumped, and the make targets.
+9. **CLAUDE.md**: create or append both the "Keep `make static` clean" and "Static Analysis & Testing Standards" sections (an existing CLAUDE.md gets them appended, never replaced). Done when both headings are present. Also include: layout, how to plan/apply, how stack release tags are bumped, and the make targets.
 10. **README.md**: create if missing: purpose, prerequisites (mise, AWS credentials), usage, environment table (terragrunt).
 
 ## Verification
@@ -74,7 +74,7 @@ Done when all hold; fix any miss before reporting.
 - `grep -rnE '~>|>=' --include='*.tf' --include='*.hcl' .` returns nothing.
 - Pipelines chosen: every environment folder is covered by a `.gruntwork/environment-*.hcl` filter, and every `uses:` is SHA-pinned.
 - `grep -nE '^\s+(terraform|terragrunt|tflint|betterleaks|shellcheck) ' Makefile` returns nothing (every call is behind `$(MISE)`).
-- Files exist: `.mise.toml`, `Makefile`, `scripts/*.sh`, `.pre-commit-config.yaml`, `.betterleaksignore`, `.github/dependabot.yml`, `.github/workflows/static-check.yml`, `CLAUDE.md`, `scratch.txt`.
+- Files exist: `.mise.toml`, `Makefile`, `scripts/*.sh`, `.pre-commit-config.yaml`, `.betterleaksignore`, `.github/dependabot.yml`, `.github/workflows/static-check.yml`, `CLAUDE.md` (with the "Keep `make static` clean" heading), `scratch.txt`.
 - `terraform` layout: `terraform init -backend=false && terraform validate` succeeds.
 
 Report what was created, what was skipped, and the next steps: review files, `mise install`, `make bootstrap-state` once per AWS account (before the first init or the pipelines bootstrap), `make static`, `make hooks`, commit with `chore: add project scaffolding`.
