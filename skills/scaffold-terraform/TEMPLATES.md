@@ -9,7 +9,10 @@ Reference for `scaffold-terraform`. Substitute `{{PLACEHOLDERS}}` from the inter
 terraform = "{{TERRAFORM_VERSION}}"
 terragrunt = "{{TERRAGRUNT_VERSION}}"   # terragrunt layout only
 tflint = "{{TFLINT_VERSION}}"
+betterleaks = "{{BETTERLEAKS_VERSION}}"
+shellcheck = "{{SHELLCHECK_VERSION}}"
 awscli = "{{AWSCLI_VERSION}}"
+yq = "{{YQ_VERSION}}"                   # terragrunt layout only (reads account.yaml)
 pre-commit = "{{PRE_COMMIT_VERSION}}"
 ```
 
@@ -56,11 +59,11 @@ terraform {
 ```hcl
 terraform {
   backend "s3" {
-    bucket       = "{{STATE_BUCKET}}"
-    key          = "{{PROJECT_NAME}}/terraform.tfstate"
-    region       = "{{STATE_REGION}}"
-    encrypt      = true
-    use_lockfile = true # or: dynamodb_table = "terraform-locks"
+    bucket         = "{{STATE_BUCKET}}"
+    key            = "{{PROJECT_NAME}}/terraform.tfstate"
+    region         = "{{STATE_REGION}}"
+    encrypt        = true
+    dynamodb_table = "terraform-locks"
   }
 }
 ```
@@ -115,60 +118,101 @@ plugin "aws" {
 
 ### Makefile (terraform)
 
+Every tool invocation goes through `$(MISE)`, so the versions pinned in `.mise.toml` are the versions that run, locally and in CI. Targets that need a tool depend on `install` (which depends on `preflight`). Logic longer than one command lives in `scripts/`.
+
 ```makefile
 .DEFAULT_GOAL := help
 SHELL := $(shell which bash)
+MISE := mise exec --
+AWS_ACCOUNT_ID := {{AWS_ACCOUNT_ID}}
+STATE_BUCKET := {{STATE_BUCKET}}
+STATE_REGION := {{STATE_REGION}}
+LOCK_TABLE := terraform-locks
 
 help: ## Show this help
 	@fgrep -h "##" $(MAKEFILE_LIST) | fgrep -v fgrep | sed -e 's/\\$$//' | sed -e 's/##//'
 
-init: ## terraform init (no backend; for validation)
-	terraform init -backend=false -input=false
+preflight: ## verify the non-mise tools the checks rely on (CI runners, slim images)
+	bash scripts/preflight.sh
 
-fmt: ## format terraform files
-	terraform fmt -recursive
+install: preflight ## install the tool versions pinned in .mise.toml
+	mise trust --yes
+	mise install
 
-fmt-check: ## check formatting without modifying
-	terraform fmt -recursive -check
+hooks: install ## install the git hooks (pre-commit runs make static)
+	$(MISE) pre-commit install
 
-validate: init ## validate configuration
-	terraform validate
+bootstrap-state: install ## create the state bucket and lock table if missing (requires credentials; idempotent)
+	$(MISE) scripts/bootstrap-state.sh $(AWS_ACCOUNT_ID) $(STATE_BUCKET) $(STATE_REGION) $(LOCK_TABLE)
 
-lint: ## run tflint
-	tflint --init
-	tflint --recursive
+fmt: install ## format terraform files
+	$(MISE) terraform fmt -recursive
 
-security: ## scan for misconfigurations
-	trivy config --exit-code 1 --severity HIGH,CRITICAL .
+fmt-check: install ## check formatting without modifying
+	$(MISE) terraform fmt -recursive -check
 
-shellcheck: ## check shell scripts
-	git ls-files 'scripts/*.sh' | xargs -r shellcheck --severity=error --format=gcc
+validate: install ## init (no backend) and validate every directory with .tf files
+	$(MISE) scripts/validate.sh
 
-unit: init ## run terraform test (no credentials)
-	terraform test -filter=tests/unit.tftest.hcl
+lint: install ## run tflint
+	$(MISE) tflint --init
+	$(MISE) tflint --recursive
+
+security: install ## scan the working tree for secrets (betterleaks)
+	$(MISE) betterleaks dir .
+
+shellcheck: install ## check committed shell scripts
+	git ls-files -z '*.sh' | xargs -0 -r $(MISE) shellcheck --severity=error --format=gcc
+
+pins: ## fail on version ranges (~>, >=) in .tf/.hcl files
+	bash scripts/check-pins.sh
+
+unit: install ## run terraform test (no credentials)
+	$(MISE) terraform init -backend=false -input=false
+	$(MISE) terraform test -filter=tests/unit.tftest.hcl
 
 unit-update-golden: ## no golden files in terraform projects
 	@echo "no golden files"
 
-integration: ## run integration tests (requires credentials)
-	terraform test -filter=tests/integration.tftest.hcl
+integration: install ## run integration tests (requires credentials)
+	$(MISE) terraform init -input=false
+	$(MISE) terraform test -filter=tests/integration.tftest.hcl
 
-plan: ## terraform plan (requires credentials)
-	terraform init -input=false
-	terraform plan -input=false
+plan: install ## terraform plan (requires credentials)
+	$(MISE) terraform init -input=false
+	$(MISE) terraform plan -input=false
 
-apply: ## terraform apply (requires credentials)
-	terraform init -input=false
-	terraform apply
+apply: install ## terraform apply (requires credentials)
+	$(MISE) terraform init -input=false
+	$(MISE) terraform apply
 
-static-check: fmt-check validate lint security shellcheck unit ## run all static checks (CI)
+static-check: preflight fmt-check validate lint security pins shellcheck unit ## run all static checks (CI)
 
-static: fmt validate lint security shellcheck unit ## run all static checks with auto-format
+static: preflight fmt validate lint security pins shellcheck unit ## run all static checks with auto-format
 
-.PHONY: help init fmt fmt-check validate lint security shellcheck unit unit-update-golden integration plan apply static-check static
+.PHONY: help preflight install hooks pins bootstrap-state fmt fmt-check validate lint security shellcheck unit unit-update-golden integration plan apply static-check static
 ```
 
-If the interview declined `terraform test`, drop `unit`/`integration` bodies to `@echo "no tests"` and keep the targets. `trivy` goes in `.mise.toml` as `trivy = "{{TRIVY_VERSION}}"`.
+`static` and `static-check` list every available terraform check (`fmt`, `validate`, `lint`, `security`, `pins`, `unit`) plus `shellcheck`; when a new check is added to the project, add it to both. If the interview declined `terraform test`, set the `unit`/`integration` bodies to `@echo "no tests"` and keep the targets.
+
+`scripts/validate.sh`:
+```bash
+#!/usr/bin/env bash
+# Run terraform init (no backend) and validate in every directory with committed .tf files.
+# Run via: mise exec -- scripts/validate.sh
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+status=0
+while read -r dir; do
+  echo "== validate ${dir}"
+  terraform -chdir="${root}/${dir}" init -backend=false -input=false >/dev/null || { status=1; continue; }
+  terraform -chdir="${root}/${dir}" validate || status=1
+done < <(git -C "${root}" ls-files '*.tf' | xargs -r -n1 dirname | sort -u)
+exit "${status}"
+```
+
+Make every script executable (`chmod +x scripts/*.sh`) and commit it, so `shellcheck` sees it.
 
 `tests/unit.tftest.hcl` seed (plan-only, no credentials; mock the provider):
 ```hcl
@@ -181,6 +225,140 @@ run "plan_succeeds" {
     aws_account_id = "123456789012"
   }
 }
+```
+
+### scripts/preflight.sh and scripts/check-pins.sh
+
+Both layouts. `preflight.sh` reports missing non-mise tools up front (a bare CI image gets one clear message instead of a mid-run failure). `make` and `bash` cannot be checked here: `make` must exist to run the Makefile, and `SHELL := $(shell which bash)` is evaluated at parse time.
+
+```bash
+#!/usr/bin/env bash
+# Verify the tools make static relies on that mise does not manage.
+set -euo pipefail
+
+missing=()
+for tool in mise git bash xargs grep; do
+  command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "ERROR: missing required tools: ${missing[*]}" >&2
+  exit 1
+fi
+
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "ERROR: not inside a git work tree" >&2; exit 1; }
+# BusyBox variants can lack these flags
+printf '' | xargs -0 -r true 2>/dev/null || { echo "ERROR: xargs lacks -0/-r" >&2; exit 1; }
+echo ab | grep -qE 'a(b)' 2>/dev/null || { echo "ERROR: grep lacks -E" >&2; exit 1; }
+```
+
+```bash
+#!/usr/bin/env bash
+# Fail on version ranges (~>, >=) in .tf and .hcl files, tracked or not yet committed.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+files=()
+while IFS= read -r -d '' f; do
+  files+=("${f}")
+done < <(git ls-files -z -co --exclude-standard -- '*.tf' '*.hcl')
+
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "no .tf/.hcl files to check"
+  exit 0
+fi
+if grep -nE '(~>|>=)' "${files[@]}"; then
+  echo "ERROR: version ranges found; pin exact versions" >&2
+  exit 1
+fi
+echo "All version pins exact"
+```
+
+The array guard matters: `xargs -r` exits 0 on empty input, which would let the check pass on nothing. A `>=` inside a Terragrunt expression is a false positive; rewrite the expression.
+
+### State bootstrap: scripts/bootstrap-state.sh
+
+Both layouts. `make bootstrap-state` creates the remote-state bucket and lock table once per AWS account, before the first `init`. It is idempotent: re-running reconciles settings and skips what exists. It needs credentials, so it stays out of `static`. Naming convention: bucket `<prefix>-terraform-state-<account-id>` (account-suffixed, globally unique), table `terraform-locks`.
+
+Best-practice settings applied: bucket versioning, default SSE (AES256 with bucket key), all public access blocked, bucket-owner-enforced ownership (ACLs off), TLS-only bucket policy, noncurrent versions expire after 90 days, incomplete multipart uploads abort after 7 days; table `LockID` (string) hash key, on-demand billing, point-in-time recovery, deletion protection, SSE. The script refuses to run when the caller's account differs from the expected one.
+
+```bash
+#!/usr/bin/env bash
+# Create the Terraform remote-state S3 bucket and DynamoDB lock table if missing (idempotent).
+# Usage: scripts/bootstrap-state.sh ACCOUNT_ID BUCKET REGION LOCK_TABLE
+set -euo pipefail
+
+if [ $# -ne 4 ]; then
+  echo "Usage: $0 ACCOUNT_ID BUCKET REGION LOCK_TABLE" >&2
+  exit 2
+fi
+account_id=$1
+bucket=$2
+region=$3
+table=$4
+
+caller=$(aws sts get-caller-identity --query Account --output text)
+if [ "${caller}" != "${account_id}" ]; then
+  echo "ERROR: credentials are for account ${caller}, expected ${account_id}" >&2
+  exit 1
+fi
+
+echo "== bucket ${bucket} (${region})"
+if aws s3api head-bucket --bucket "${bucket}" 2>/dev/null; then
+  echo "exists"
+else
+  if [ "${region}" = "us-east-1" ]; then
+    aws s3api create-bucket --bucket "${bucket}" --region "${region}"
+  else
+    aws s3api create-bucket --bucket "${bucket}" --region "${region}" \
+      --create-bucket-configuration "LocationConstraint=${region}"
+  fi
+fi
+
+aws s3api put-bucket-versioning --bucket "${bucket}" \
+  --versioning-configuration Status=Enabled
+aws s3api put-bucket-encryption --bucket "${bucket}" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'
+aws s3api put-public-access-block --bucket "${bucket}" \
+  --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-ownership-controls --bucket "${bucket}" \
+  --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerEnforced}]'
+aws s3api put-bucket-policy --bucket "${bucket}" --policy "$(cat <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "DenyInsecureTransport",
+    "Effect": "Deny",
+    "Principal": "*",
+    "Action": "s3:*",
+    "Resource": ["arn:aws:s3:::${bucket}", "arn:aws:s3:::${bucket}/*"],
+    "Condition": {"Bool": {"aws:SecureTransport": "false"}}
+  }]
+}
+POLICY
+)"
+aws s3api put-bucket-lifecycle-configuration --bucket "${bucket}" \
+  --lifecycle-configuration '{"Rules":[{"ID":"expire-noncurrent-and-abort-multipart","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}}]}'
+
+echo "== lock table ${table} (${region})"
+if aws dynamodb describe-table --table-name "${table}" --region "${region}" >/dev/null 2>&1; then
+  echo "exists"
+else
+  aws dynamodb create-table --table-name "${table}" --region "${region}" \
+    --attribute-definitions AttributeName=LockID,AttributeType=S \
+    --key-schema AttributeName=LockID,KeyType=HASH \
+    --billing-mode PAY_PER_REQUEST \
+    --deletion-protection-enabled \
+    --sse-specification Enabled=true >/dev/null
+  aws dynamodb wait table-exists --table-name "${table}" --region "${region}"
+fi
+aws dynamodb update-continuous-backups --table-name "${table}" --region "${region}" \
+  --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true >/dev/null
+aws dynamodb update-table --table-name "${table}" --region "${region}" \
+  --deletion-protection-enabled >/dev/null 2>&1 || true
+
+echo "state backend ready: s3://${bucket}, table ${table}"
 ```
 
 ## Terragrunt layout
@@ -335,48 +513,68 @@ Also write `<env>/.terraform-version` and `<env>/.terragrunt-version` containing
 
 ### Makefile (terragrunt)
 
-Same header, `help`, `shellcheck`, `unit`, `unit-update-golden`, `integration`, and `.PHONY` shape as the terraform Makefile. Replace the terraform-specific targets with:
+Same header (`MISE := mise exec --`), `help`, `preflight`, `install`, `hooks`, `pins`, `shellcheck`, `unit`, `unit-update-golden`, `integration` and `.PHONY` shape as the terraform Makefile. Replace the terraform-specific targets with:
 
 ```makefile
-ENVS := $(patsubst %/account.yaml,%,$(wildcard */account.yaml))
+bootstrap-state: install ## create an env's state bucket and lock table if missing (usage: make bootstrap-state env=<folder>; requires credentials)
+	$(MISE) scripts/bootstrap-state.sh \
+	  "$$($(MISE) yq '.aws_account_id' $(env)/account.yaml)" \
+	  "$$($(MISE) yq '.terraform_state_bucket_name' $(env)/account.yaml)" \
+	  "$$($(MISE) yq '.terraform_state_bucket_region' $(env)/account.yaml)" \
+	  "$$($(MISE) yq '.terraform_state_bucket_dynamodb_table_name' $(env)/account.yaml)"
 
-fmt: ## format hcl files
-	terragrunt hcl fmt
+fmt: install ## format hcl files
+	$(MISE) terragrunt hcl fmt
 
-fmt-check: ## check hcl formatting without modifying
-	terragrunt hcl fmt --check
+fmt-check: install ## check hcl formatting without modifying
+	$(MISE) terragrunt hcl fmt --check
 
-validate: ## validate hcl syntax and inputs
-	terragrunt hcl validate --inputs --all
+validate: install ## validate hcl syntax and inputs in every environment
+	$(MISE) scripts/for-each-env.sh terragrunt hcl validate --inputs
 
-security: ## scan for misconfigurations
-	trivy config --exit-code 1 --severity HIGH,CRITICAL .
+security: install ## scan the working tree for secrets (betterleaks)
+	$(MISE) betterleaks dir .
 
-stack-generate: ## generate stacks for one env (usage: make stack-generate env=<folder>)
-	cd $(env) && terragrunt stack generate
+stack-generate: install ## generate stacks for one env (usage: make stack-generate env=<folder>)
+	cd $(env) && $(MISE) terragrunt stack generate
 
-plan: ## plan one env (usage: make plan env=<folder>)
-	cd $(env) && terragrunt stack run plan
+plan: install ## plan one env (usage: make plan env=<folder>)
+	cd $(env) && $(MISE) terragrunt stack run plan
 
 unit: ## no unit tests in an env-values repo
 	@echo "no unit tests"
 
-static-check: fmt-check shellcheck ## run all static checks (CI)
+static-check: preflight fmt-check validate security pins shellcheck ## run all static checks (CI)
 
-static: fmt shellcheck ## run all static checks with auto-format
+static: preflight fmt validate security pins shellcheck ## run all static checks with auto-format
 ```
 
-`terragrunt hcl validate` flags vary by version: confirm with `terragrunt hcl validate --help` and add it to `static-check` only when it runs without credentials; otherwise leave it as a manual target. `plan` and `stack-generate` need credentials and stay out of `static`. Add `ENVS stack-generate plan` to `.PHONY`.
+`terragrunt hcl validate` flags vary by version: confirm with `$(MISE) terragrunt hcl validate --help`, and run `make validate` without credentials. If it needs them, drop `validate` from `static` and `static-check` and leave it as a manual target. `plan` and `stack-generate` need credentials and stay out of `static`. Add `bootstrap-state stack-generate plan` to `.PHONY`. Environments sharing an account (an environment folder and its `aws-*-pipelines-bootstrap` folder) share one bucket and table, so bootstrap once per account.
+
+`scripts/for-each-env.sh`:
+```bash
+#!/usr/bin/env bash
+# Run a command inside every environment folder (a top-level folder holding account.yaml).
+# Usage: scripts/for-each-env.sh COMMAND [ARGS...]
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+status=0
+for account in "${root}"/*/account.yaml; do
+  env_dir=$(dirname "${account}")
+  case "$(basename "${env_dir}")" in aws-*-pipelines-bootstrap) continue ;; esac
+  echo "== ${env_dir#"${root}"/}"
+  (cd "${env_dir}" && "$@") || status=1
+done
+exit "${status}"
+```
 
 ## .pre-commit-config.yaml
 
+The git hook runs `make static`, which includes the betterleaks secret scan, shellcheck and the terraform checks. `make hooks` installs it.
+
 ```yaml
 repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: {{GITLEAKS_VERSION}}
-    hooks:
-      - id: gitleaks
-
   - repo: local
     hooks:
       - id: make-static
@@ -384,11 +582,14 @@ repos:
         entry: make static
         language: system
         pass_filenames: false
+        always_run: true
 ```
 
-`.gitleaksignore`:
+`.betterleaks.toml` (optional; the default ruleset applies without it). Add path allowlists or custom checks there, e.g. `[sops_check] paths = ["**/sops-secrets/**"]` as in `icp-iac-bedrock`.
+
+`.betterleaksignore` (false positives; betterleaks also reads `.gitleaksignore`):
 ```
-# Gitleaks ignore patterns
+# Betterleaks ignore patterns
 # Format: path/to/file:rule-name:line-number
 ```
 
@@ -469,10 +670,11 @@ jobs:
 Enforced by the `scaffold-terraform` skill:
 
 1. **Pinned versions**: terraform, terragrunt, providers, modules, and GitHub Actions use exact versions (tools in `.mise.toml`).
-2. **Static analysis**: `make static` before committing (fmt, validate, tflint, trivy, shellcheck, tests).
-3. **Pre-commit**: gitleaks + `make static`.
-4. **Dependabot**: weekly for `terraform` and `github-actions`.
-5. **CI**: `.github/workflows/static-check.yml` runs `make static-check` on PRs and main.
+2. **Static analysis**: `make static` before committing: shellcheck on committed `*.sh`, plus fmt, validate, tflint, betterleaks and tests where the layout supports them.
+3. **mise**: every make target runs its tool via `mise exec --`; add tools to `.mise.toml`, scripts to `scripts/`.
+4. **Git hook**: pre-commit runs `make static` (betterleaks, shellcheck, terraform checks); `make hooks` installs it.
+5. **Dependabot**: weekly for `terraform` and `github-actions`.
+6. **CI**: `.github/workflows/static-check.yml` runs `make static-check` on PRs and main.
 
 Run `make help` for all targets. `make plan` / `make apply` need AWS credentials.
 ```
@@ -515,24 +717,33 @@ environment "{{ENV_NAME}}" {
 }
 ```
 
-### Shared environment-detection script
+### scripts/detect-env.sh
 
-Both plan and apply run this (plan diffs against `origin/<base_ref>...HEAD`; apply against `github.event.before github.event.after`). Set `CHANGED_FILES` first, then:
+Plan and apply both call this, so the logic is shellchecked and lives in one place. Arguments are passed to `git diff --name-only` (plan: `origin/$BASE_REF...HEAD`; apply: `$BEFORE $AFTER`). `PROD_REGEX` defaults to the prod folder prefix from the interview.
 
 ```bash
-TOP_LEVEL_FOLDERS=$(echo "$CHANGED_FILES" | grep -v '^$' | grep -vE '^(README\.md|\.gitignore)$|^(\.github|\.gruntwork|aws-)' | cut -d'/' -f1 | sort -u)
+#!/usr/bin/env bash
+# Detect the environment(s) a change touches and refuse to mix prod with non-prod.
+# Usage: scripts/detect-env.sh GIT_DIFF_ARGS...   (writes environment=... to $GITHUB_OUTPUT when set)
+set -euo pipefail
 
-ENVIRONMENT=""
-for folder in $TOP_LEVEL_FOLDERS; do
-  ENVIRONMENT="${ENVIRONMENT:+$ENVIRONMENT-}${folder}"
+prod_regex="${PROD_REGEX:-{{PROD_REGEX}}}"
+
+changed_files=$(git diff --name-only "$@")
+top_level_folders=$(echo "${changed_files}" | grep -v '^$' | grep -vE '^(README\.md|\.gitignore)$|^(\.github|\.gruntwork|aws-|scripts)' | cut -d'/' -f1 | sort -u || true)
+
+environment=""
+for folder in ${top_level_folders}; do
+  environment="${environment:+${environment}-}${folder}"
 done
-[ -z "$ENVIRONMENT" ] && ENVIRONMENT="unknown"
-echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+environment="${environment:-unknown}"
+echo "Detected environment: ${environment}"
+echo "environment=${environment}" >> "${GITHUB_OUTPUT:-/dev/stdout}"
 
-PROD_FOLDERS=$(echo "$TOP_LEVEL_FOLDERS" | grep -E '{{PROD_REGEX}}' | grep -v '^$' || true)
-NONPROD_FOLDERS=$(echo "$TOP_LEVEL_FOLDERS" | grep -vE '{{PROD_REGEX}}' | grep -v '^$' || true)
-if [ -n "$PROD_FOLDERS" ] && [ -n "$NONPROD_FOLDERS" ]; then
-  echo "ERROR: prod and non-prod folders changed together; submit production changes in a separate PR."
+prod_folders=$(echo "${top_level_folders}" | grep -E "${prod_regex}" || true)
+nonprod_folders=$(echo "${top_level_folders}" | grep -vE "${prod_regex}" | grep -v '^$' || true)
+if [ -n "${prod_folders}" ] && [ -n "${nonprod_folders}" ]; then
+  echo "ERROR: prod and non-prod folders changed together; submit production changes in a separate PR." >&2
   exit 1
 fi
 ```
@@ -576,8 +787,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch origin "$BASE_REF"
-          CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF...HEAD")
-          # <shared environment-detection script>
+          scripts/detect-env.sh "origin/$BASE_REF...HEAD"
 
   AcquireEnvironmentLock:
     needs: DetectEnvironment
@@ -595,7 +805,7 @@ jobs:
       runner: {{RUNNER}}
 ```
 
-Inline the shared script in place of the `# <shared ...>` comment. Branch names go through `env:` rather than direct `${{ }}` interpolation in `run:`.
+Branch names go through `env:` rather than direct `${{ }}` interpolation in `run:`.
 
 ### .github/workflows/pipelines-apply.yaml
 ```yaml
@@ -636,8 +846,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.event.after }}
         run: |
-          CHANGED_FILES=$(git diff --name-only "$BEFORE" "$AFTER")
-          # <shared environment-detection script>
+          scripts/detect-env.sh "$BEFORE" "$AFTER"
 
   GruntworkPipelines:
     needs: Preflight
