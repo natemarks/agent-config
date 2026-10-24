@@ -52,15 +52,21 @@ Runs shellcheck on all shell scripts.
 
 ## How It Works
 
-`install.sh` only touches skill directories owned by this project. Ownership is
-recorded in `<target>/.agent-config-manifest`.
+`install.sh` only writes to skill directories owned by this project, and it never deletes anything.
+Ownership is recorded in `<target>/.agent-config-manifest`.
 
 For each target directory, it:
 1. Refuses to overwrite a same-named skill it doesn't own and exits with an error.
    Pass `--force` (`make deploy FORCE=1`) to take ownership of it.
-2. Removes skills listed in the manifest that no longer exist in `skills/`
-3. Syncs each skill in `skills/` to `<target>/<skill>/`, removing stale files only inside that skill's directory
-4. Writes the updated manifest
+2. Copies each skill in `skills/` to `<target>/<skill>/`, creating or overwriting files
+3. Writes the updated manifest
+
+At the end it prints `rm` commands for anything that should be cleaned up:
+- files inside a managed skill that no longer exist in `skills/`
+- managed skills that were removed from `skills/`
+
+Review the commands and run them yourself. A removed skill stays in the manifest
+until its directory is gone, so every deploy repeats the reminder.
 
 It leaves everything else in the target alone, including skills installed by plugins or other tools.
 It refuses to deploy to `/` or `$HOME`. The script finds `skills/` from its own

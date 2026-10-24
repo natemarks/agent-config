@@ -5,14 +5,15 @@ set -euo pipefail
 #
 # Usage: ./install.sh [--force] TARGET_DIR [TARGET_DIR2 ...]
 #
-# Syncs each skill in skills/ to TARGET_DIR/<skill>. Only skill directories
-# owned by this project are ever written or removed. Ownership is tracked in
+# Copies each skill in skills/ to TARGET_DIR/<skill>. Only skill directories
+# owned by this project are ever written. Ownership is tracked in
 # TARGET_DIR/.agent-config-manifest:
-#   - a skill listed in the manifest is synced exactly (stale files removed)
-#   - a skill listed in the manifest but no longer in skills/ is removed
+#   - a skill listed in the manifest is updated from skills/
 #   - a pre-existing skill directory NOT in the manifest is left untouched and
 #     the deploy aborts, unless --force is given to adopt it
-# Anything else in TARGET_DIR is never touched.
+# This script never deletes anything. Stale files inside managed skills, and
+# managed skills no longer in skills/, are printed as rm commands to review
+# and run manually. Anything else in TARGET_DIR is never touched.
 
 MANIFEST_NAME=".agent-config-manifest"
 FORCE=0
@@ -67,16 +68,35 @@ in_list() {
     return 1
 }
 
-sync_skill() {
+copy_skill() {
     local src="$1" dest="$2"
     if command -v rsync >/dev/null 2>&1; then
-        # --delete is scoped to this single skill directory
-        rsync -a --delete "$src/" "$dest/"
+        rsync -a "$src/" "$dest/"
     else
-        rm -rf "${dest:?}"
-        cp -R "$src" "$dest"
+        mkdir -p "$dest"
+        cp -R "$src/." "$dest/"
     fi
 }
+
+list_tree() {
+    (cd "$1" && find . -mindepth 1 | sed 's|^\./||' | LC_ALL=C sort)
+}
+
+# Print paths under dest that don't exist under src, skipping children of
+# paths already reported (rm -r on the parent covers them)
+stale_paths() {
+    local src="$1" dest="$2" path last=""
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        if [ -n "$last" ] && [[ "$path" == "$last"/* ]]; then
+            continue
+        fi
+        last="$path"
+        printf '%s\n' "$path"
+    done < <(LC_ALL=C comm -13 <(list_tree "$src") <(list_tree "$dest"))
+}
+
+CLEANUP=()
 
 # Deploy to each target directory
 for TARGET_DIR in "$@"; do
@@ -121,23 +141,36 @@ for TARGET_DIR in "$@"; do
         exit 1
     fi
 
-    # Remove skills this project previously deployed but no longer ships
+    for name in "${SKILLS[@]}"; do
+        echo "  + $name"
+        copy_skill "$SKILLS_SOURCE/$name" "$TARGET_DIR/$name"
+        while IFS= read -r path; do
+            CLEANUP+=("$(printf 'rm -r -- %q' "$TARGET_DIR/$name/$path")")
+        done < <(stale_paths "$SKILLS_SOURCE/$name" "$TARGET_DIR/$name")
+    done
+
+    # Skills previously deployed but no longer shipped stay in the manifest
+    # until they are removed, so the cleanup reminder repeats on every deploy
+    NEW_MANIFEST=("${SKILLS[@]}")
     for name in ${MANAGED[@]+"${MANAGED[@]}"}; do
         if ! in_list "$name" "${SKILLS[@]}" && [ -e "$TARGET_DIR/$name" ]; then
-            echo "  - removing $name"
-            rm -rf "${TARGET_DIR:?}/${name:?}"
+            CLEANUP+=("$(printf 'rm -r -- %q' "$TARGET_DIR/$name")")
+            NEW_MANIFEST+=("$name")
         fi
     done
 
-    for name in "${SKILLS[@]}"; do
-        echo "  + $name"
-        sync_skill "$SKILLS_SOURCE/$name" "$TARGET_DIR/$name"
-    done
-
-    printf '%s\n' "${SKILLS[@]}" > "$MANIFEST"
+    printf '%s\n' "${NEW_MANIFEST[@]}" > "$MANIFEST"
 
     echo "✓ Deployed to $TARGET_DIR"
     echo ""
 done
 
 echo "✓ Deployment complete!"
+
+if [ ${#CLEANUP[@]} -gt 0 ]; then
+    echo ""
+    echo "The following managed paths are no longer in this project."
+    echo "Nothing was deleted. Review and run these commands to clean up:"
+    echo ""
+    printf '  %s\n' "${CLEANUP[@]}"
+fi
