@@ -8,7 +8,7 @@ This skill creates a complete, production-ready project structure with:
 
 - ✅ **Language-specific Makefile** with static analysis targets (Python, Go, Rust, CDK)
 - ✅ **Pinned dependencies** (no version ranges that break unexpectedly)
-- ✅ **Pre-commit hooks** (gitleaks secret scanning + make static)
+- ✅ **Pre-commit hooks** (betterleaks secret scanning + make static)
 - ✅ **Dependabot configuration** (automated weekly dependency updates)
 - ✅ **GitHub Actions workflow** (runs static checks on PRs and main)
 - ✅ **CLAUDE.md** project standards file
@@ -71,7 +71,7 @@ The skill will:
     └── static-check.yml        # CI/CD pipeline
 
 .pre-commit-config.yaml         # Pre-commit hooks config
-.gitleaksignore                 # Secret scanning exceptions
+.betterleaksignore               # Secret scanning exceptions
 Makefile                        # Build and validation targets
 CLAUDE.md                       # Project standards documentation
 ```
@@ -181,7 +181,7 @@ git add .
 git commit -m "chore: add project scaffolding
 
 - Add Makefile with static analysis targets
-- Configure pre-commit hooks (gitleaks + make static)
+- Configure pre-commit hooks (betterleaks + make static)
 - Configure Dependabot for automated updates
 - Add GitHub Actions CI/CD workflow
 - Pin all dependency versions"
@@ -202,7 +202,7 @@ gh workflow view static-check
 ### 5. Review and Customize
 - **CLAUDE.md** - Add project-specific details
 - **Makefile** - Add custom targets if needed
-- **.gitleaksignore** - Add false positive patterns
+- **.betterleaksignore** - Add false positive patterns
 - **.github/dependabot.yml** - Adjust update schedule or grouping
 
 ## Git Initialization
@@ -394,7 +394,7 @@ This skill enforces opinionated standards based on lessons learned:
 
 4. **Make as the universal interface** - Consistent commands across projects (`make static`, `make test`).
 
-5. **Security by default** - Gitleaks prevents secret commits. Pre-commit hooks enforce standards.
+5. **Security by default** - Betterleaks prevents secret commits. Pre-commit hooks enforce standards.
 
 6. **CI/CD from day one** - GitHub Actions configured from the start, not bolted on later.
 
@@ -429,7 +429,7 @@ mypy: .venv
 ```yaml
 # .pre-commit-config.yaml
 repos:
-  # ... existing gitleaks hook ...
+  # ... existing betterleaks hook ...
   
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

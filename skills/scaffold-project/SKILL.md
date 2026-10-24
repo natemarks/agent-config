@@ -112,10 +112,10 @@ git ls-files 'scripts/*.sh' | xargs shellcheck --severity=error --format=gcc
 ### Rule 4: Pre-commit Hooks
 
 MUST configure `.pre-commit-config.yaml` with:
-1. **gitleaks** - Secret scanning (blocks commits with secrets)
+1. **betterleaks** - Secret scanning (blocks commits with secrets)
 2. **make static** - Runs all static checks before commit
 
-Create `.gitleaksignore` for false positives.
+Create `.betterleaksignore` for false positives.
 
 ### Rule 5: Dependabot Configuration
 
@@ -385,12 +385,12 @@ Execute these steps IN ORDER. Verify each step before proceeding.
 **Create `.pre-commit-config.yaml`:**
 
 Use template from TEMPLATES section. Always include:
-1. gitleaks hook (pinned version)
+1. betterleaks hook, `rev` pinned to the latest stable release (`gh api repos/betterleaks/betterleaks/releases/latest --jq .tag_name`; release candidates are marked prerelease and are skipped by `latest`). The template's `rev` is a fallback.
 2. Local hook for `make static`
 
-**Create `.gitleaksignore`:**
+**Create `.betterleaksignore`:**
 ```
-# Gitleaks ignore patterns
+# Betterleaks ignore patterns
 # Add file paths or patterns for false positives
 # Format: path/to/file.py:rule-name:line-number
 ```
@@ -402,7 +402,7 @@ pre-commit==4.6.2
 
 **Verification:**
 - [ ] `.pre-commit-config.yaml` exists
-- [ ] `.gitleaksignore` exists
+- [ ] `.betterleaksignore` exists
 - [ ] `pre-commit` in requirements.txt (Python)
 
 ### Step 4: Create Dependabot Configuration
@@ -468,7 +468,7 @@ This project follows opinionated standards enforced by the `scaffold-project` sk
 
 1. **Pinned Dependencies**: All dependency versions are pinned to exact versions
 2. **Static Analysis**: Run `make static` before committing
-3. **Pre-commit Hooks**: Configured with gitleaks and make static
+3. **Pre-commit Hooks**: Configured with betterleaks and make static
 4. **Dependabot**: Configured for automated weekly updates
 5. **CI/CD**: GitHub Actions runs static checks on PRs and main pushes
 
@@ -622,7 +622,7 @@ Run through this checklist. If ANY item fails, FIX IT before completing.
 
 **Configuration Files:**
 - [ ] `.pre-commit-config.yaml` exists
-- [ ] `.gitleaksignore` exists
+- [ ] `.betterleaksignore` exists
 - [ ] `.github/dependabot.yml` exists
 - [ ] `.github/workflows/static-check.yml` exists
 - [ ] CLAUDE.md exists and documents standards
@@ -643,7 +643,7 @@ After verification passes, report to user:
 
 Created/Updated:
 - Makefile with [language] static analysis targets
-- .pre-commit-config.yaml (gitleaks + make static)
+- .pre-commit-config.yaml (betterleaks + make static)
 - .github/dependabot.yml ([ecosystems])
 - .github/workflows/static-check.yml
 - CLAUDE.md with project standards
@@ -1077,10 +1077,10 @@ clean-cache: ## clean Rust build artifacts
 
 ```yaml
 repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.1
+  - repo: https://github.com/betterleaks/betterleaks
+    rev: v1.9.0
     hooks:
-      - id: gitleaks
+      - id: betterleaks
 
   - repo: local
     hooks:
@@ -1311,7 +1311,7 @@ jobs:
 
 **Issue: pre-commit hook too slow**
 - Consider splitting into pre-commit (fast) and pre-push (slow) hooks
-- Keep gitleaks in pre-commit, move `make static` to pre-push
+- Keep betterleaks in pre-commit, move `make static` to pre-push
 
 **Issue: Dependabot PRs fail static checks**
 - Expected if golden files need updating

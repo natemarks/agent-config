@@ -541,7 +541,7 @@ If branch protections were temporarily disabled for the force push, re-enable th
 Recommend:
 - Add the sensitive path(s) to `.gitignore`
 - Use GitHub secret scanning / push protection
-- Add a pre-commit hook with `gitleaks` (see `scaffold-project` skill)
+- Add a pre-commit hook with `betterleaks` (see `scaffold-project` skill)
 - Use environment variables or AWS Secrets Manager / GitHub Actions secrets instead of hardcoded values
 
 ---
