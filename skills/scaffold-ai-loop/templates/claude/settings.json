@@ -31,7 +31,6 @@
       "Bash(gh pr list*)",
       "Bash(gh pr checks*)",
       "Bash(gh pr create --draft*)",
-      "Bash(gh pr edit*)",
       "Bash(gh pr ready*)",
       "Edit(/.goal/**)",
       "Write(/.goal/**)"
