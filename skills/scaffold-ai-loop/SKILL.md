@@ -11,7 +11,7 @@ Adds an issue-to-PR loop on top of a project that `scaffold-project` or `scaffol
 1. `/loop-status` shows what needs the human and the next command for each item.
 2. `/groom-issue <issue>`: the planner finds contract gaps and maps each acceptance criterion to a check, the human approves it all in one screen, the test-author writes Gherkin scenarios, goal-tagged failing tests and temporary checks, and a draft PR opens in its own worktree with `make goal` **red**.
 3. `/drive-pr`: the implementer loops until `make goal` is **green**, fresh read-only reviewers hunt for gaps (blocking ones become new failing checks), `make goal-settle` folds the goal's tests into the permanent suite, and the PR is marked ready. The PR's status block shows progress, and a stop names the decision needed and the command that resumes.
-4. The human reviews and merges. The required `goal-settled` check blocks an unsettled PR, and the loop's permissions deny merging to agents.
+4. The human reviews and merges. The required `goal-settled` check blocks an unsettled PR. The loop's permissions let Claude run normal contributor `gh` operations, including merging PRs, but the check still gates the merge.
 
 Everything written into the project is a project file under version control, so the team reviews and edits it like code. Re-running this skill updates it.
 
@@ -51,7 +51,7 @@ Run in order; each step is done when its line holds.
 3. **Self-test probe**: write `scripts/goal-selftest/dest` and `scripts/goal-selftest/probe` from the language's probe (none for a Terraform envs repo).
 4. **Makefile**: append the block from [TEMPLATES.md](TEMPLATES.md#makefile-block) with the language's values. Done when `make help` lists `goal`, `goal-tests`, `goal-settle`, `goal-settled`, `goal-selftest`, `loop-doctor`, `loop-protect` and `loop-status`.
 5. **Gitignore**: add `.goal/*.log` and `.claude/worktrees/`.
-6. **Permissions**: merge `templates/claude/settings.json` into `.claude/settings.json` with `{{DEFAULT_BRANCH}}` filled, keeping existing entries. It pre-approves the loop's commands, so `/drive-pr` runs without prompts, and denies merging, skipping the commit hook, force pushes and pushes to the default branch. Show the human the merged `permissions` before writing.
+6. **Permissions**: merge `templates/claude/settings.json` into `.claude/settings.json` with `{{DEFAULT_BRANCH}}` filled, keeping existing entries. It pre-approves the loop's commands and all normal contributor `gh` operations (PRs including merge, issues, labels, runs, workflows, read-only repo/release/API queries), so `/drive-pr` runs without prompts. It denies destructive `gh` operations (repo/release deletion, API DELETE), skipping the commit hook, force pushes and pushes to the default branch. Show the human the merged `permissions` before writing.
 7. **CI**: copy `templates/ci/goal-settled.yml` to `.github/workflows/`, with the latest `actions/checkout` release SHA resolved live (`gh api repos/actions/checkout/releases/latest`, then the tag's commit). Done when its `uses:` line carries a SHA and a `# vX.Y.Z` comment.
 8. **Agents**: copy `templates/agents/*.md` to `.claude/agents/`.
 9. **Skills**: copy `templates/skills/<name>/SKILL.md.tmpl` to `.claude/skills/<name>/SKILL.md` for `loop-status`, `groom-issue` and `drive-pr`.

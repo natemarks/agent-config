@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 Arguments: `$ARGUMENTS`: an optional PR number, then optional **rounds** (default 6). Without a PR number, use the current branch's PR (`gh pr view --json number`); with neither, ask.
 
-You are the orchestrator. Agents do the work; you hold the evidence: run `make goal` yourself after every round and trust its output over any agent's report. One implementer owns the change at a time. The PR is yours to drive, and merging it belongs to the human. The PR's **status block** is the human's dashboard and your memory: update it every round. Its format, and the loop's layout, are in the "AI loop" section of `CLAUDE.md`.
+You are the orchestrator. Agents do the work; you hold the evidence: run `make goal` yourself after every round and trust its output over any agent's report. One implementer owns the change at a time. The PR is yours to drive; merge it only when the human asks. The PR's **status block** is the human's dashboard and your memory: update it every round. Its format, and the loop's layout, are in the "AI loop" section of `CLAUDE.md`.
 
 ## 0. Resume
 

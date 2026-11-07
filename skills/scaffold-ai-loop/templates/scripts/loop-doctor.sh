@@ -69,8 +69,8 @@ for skill in groom-issue drive-pr loop-status; do
     [ -f ".claude/skills/$skill/SKILL.md" ] || missing+=" skill:/$skill"
 done
 if [ -z "$missing" ]; then pass "five agents and three loop skills"; else fail "missing:$missing" "re-run /scaffold-ai-loop"; fi
-if grep -q 'gh pr merge' .claude/settings.json 2>/dev/null; then
-    pass ".claude/settings.json pre-approves loop commands and denies merge"
+if grep -q 'gh pr \*' .claude/settings.json 2>/dev/null; then
+    pass ".claude/settings.json pre-approves loop and gh contributor commands"
 else
     fail ".claude/settings.json lacks the loop permissions" "re-run /scaffold-ai-loop"
 fi
