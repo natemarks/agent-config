@@ -13,7 +13,8 @@ Simple deployment tool for Claude Code skills.
     ├── purge-sensitive-data/
     ├── scaffold-ai-loop/
     ├── scaffold-project/
-    └── scaffold-terraform/
+    ├── scaffold-terraform/
+    └── spike-export/
 ```
 
 ## Skills
@@ -24,6 +25,7 @@ Simple deployment tool for Claude Code skills.
 | `/scaffold-terraform` | set up a Terragrunt envs or stacks repo to the same bar |
 | `/scaffold-ai-loop` | add the AI loop below to a project set up by either of the above |
 | `/findings-to-issues` | turn a security findings document into one GitHub issue per finding |
+| `/spike-export` | review a throwaway spike and write `SPIKE.md`, a findings handoff that seeds a new project without its implementation |
 | `/purge-sensitive-data` | remove secrets from git history |
 
 ## AI loop
