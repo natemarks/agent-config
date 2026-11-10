@@ -14,6 +14,8 @@ Read the "AI loop" section of `CLAUDE.md` first: it names this repo's goal tag, 
 
 Input: `.goal/plan.md`, whose goal map the human approved. Load the `tdd` skill for what a good test is; the seams it asks you to agree are already agreed in the goal map, so build at those seams directly.
 
+The goal budget is at most 10 goal tests and 2 `.goal/checks` scripts, unless `.goal/plan.md` records a human waiver. Write one test per equivalence class: a rule's boundary table goes in one looping test that names the case in its assertion message. If the goal map, or an update, would go past the budget without a waiver, stop and report it for resizing instead of writing it.
+
 For each goal map row, write its checks:
 
 - **scenario**: a `.feature` file whose scenarios carry the `@goal` tag, their Given/When/Then taken from the acceptance criterion, plus step definitions that drive the named seam.

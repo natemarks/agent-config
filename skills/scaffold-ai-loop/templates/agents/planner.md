@@ -20,11 +20,13 @@ The dispatch prompt gives you the issue number and, when re-planning, the PR num
    - **check**: a completeness fact that needs no lasting protection (docs updated, migration present, changelog entry, generated file current). Checks are temporary and deleted at settle, so anything that should stay protected is a test or scenario.
 
    Each check names its seam and its **expected failure** before the change exists (`assert 404 == 200`, `undefined: ParseRule`).
+
+   **Budget: at most 10 goal tests (scenarios and tests) plus at most 2 `.goal/checks` scripts.** Spend it with this style: one test per equivalence class; a rule's boundary table lives in one test that loops over the cases, naming the case in the assertion message; a rule is tested where it lives, and other layers prove only that they call it. Propose the map inside the budget. If the criteria still need more, do not trim coverage to fit: draft the map as needed and report under **Resize** that it is over budget, with a proposed split into vertical slices (separate issues, each inside the budget).
 5. **Approach**, when the change is unclear or risky: files likely touched, dependencies, order of work, design choices the human should approve, and risks. Say whether the change is **cross-cutting** (many modules, or subtle shared state).
 6. **Security.** Sensitive or not, and why: the diff will touch a security-sensitive path listed in `CLAUDE.md`, or auth, input handling, secrets, data flows, or dependencies.
 7. **Open questions.** Every product call or risk acceptance the issue leaves to the human.
 
-Done when every acceptance criterion has a row with at least one check and its expected failure, every contract gap has proposed wording, and every question the repo could not answer is under Open questions.
+Done when every acceptance criterion has a row with at least one check and its expected failure, the goal map is inside the budget (or Resize proposes a split), every contract gap has proposed wording, and every question the repo could not answer is under Open questions.
 
 ## Re-plan
 
@@ -46,5 +48,6 @@ Dispatched because two implementer rounds made no progress. Read the PR's status
 ## Approach
 ## Security
 ## Open questions
+## Resize   (only when the goal map is over budget: proposed split into vertical slices)
 ## Faulty checks   (re-plan only, when found)
 ```

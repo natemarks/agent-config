@@ -64,10 +64,12 @@ The **goal** is the PR's executable definition of done.
 
 - `make goal`: `{{STATIC_TARGET}}`, goal-guard, goal-tagged tests and scenarios, and `.goal/checks/*.sh`. The last line reads `GOAL GREEN` or `GOAL RED: <gates>`.
 - `make goal-tests`: goal-tagged tests and scenarios only.
+- **Budget**: a goal has at most 10 goal tests plus 2 `.goal/checks` scripts, with one test per equivalence class (a rule's boundary table in one looping test; a rule tested where it lives). It is a soft limit: a map over budget stops at approval with a proposed split into vertical slices, and the human can waive it by naming the reason.
 - `make goal-settle`: untag the goal's tests so they join `make unit`, delete `.goal/`, commit `goal: settle #<issue>`.
 - `make goal-settled`: fails while goal scaffolding remains. A required CI check on ready PRs.
 - `make goal-selftest` and `make loop-doctor`: prove the loop works, and check what it depends on.
 - **Goal tag**: {{GOAL_TAG}}, on a line of its own. It keeps a red test out of `make unit`, so the commit hook stays green.
+- **Count**: `{{GOAL_COUNT}}` lists the goal tests for the budget; `ls .goal/checks/*.sh | wc -l` counts the checks.
 - **BDD**: {{BDD_RUNNER}}. Features in `{{FEATURES_DIR}}`; red scenarios are tagged `@goal`.
 
 `.goal/` exists only on a PR branch and is deleted at settle:

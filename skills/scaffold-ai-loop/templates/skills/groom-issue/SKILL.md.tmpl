@@ -30,11 +30,13 @@ Dispatch the **planner** agent with the issue number (and the PR number on `--up
 
 ## 4. Approve
 
-Present one screen: the contract gaps with their proposed wording (skip the heading when there are none), the goal map, the approach, the security call, and the open questions. The human approves, edits, or answers each item in one reply; iterate until they approve the whole screen.
+If the planner reports **Resize** (the goal map is over budget: 10 goal tests, 2 `.goal/checks` scripts), stop at approval and present the proposed split into vertical slices. The human chooses: split the issue (create the smaller issues with `gh issue create`, narrow or close this one, groom each separately), narrow its criteria until the map fits, or **waive** the budget by naming the reason (for example a security allow-list). Record a waiver and its reason in `.goal/plan.md`. Re-plan after any change.
+
+Otherwise present one screen: the contract gaps with their proposed wording (skip the heading when there are none), the goal map, the approach, the security call, and the open questions. The human approves, edits, or answers each item in one reply; iterate until they approve the whole screen.
 
 With approval, write any accepted contract wording back to the issue (`gh issue edit <n> --body-file -`) so the issue stays the single source of truth, and write the approved plan to `.goal/plan.md`.
 
-Done when the human approves the goal map, and every acceptance criterion on it can be checked.
+Done when the human approves the goal map (inside the budget, or waived with a reason), and every acceptance criterion on it can be checked.
 
 ## 5. Define the goal
 
@@ -47,6 +49,7 @@ Run the checks yourself; the test-author's report is a claim, and this is the ev
 - The static gate passes, so the commit hook stays green.
 - `make goal 2>&1 | tee .goal/last-run.log` ends `GOAL RED`, failing each goal map check with that check's expected failure.
 - `make goal-settled` fails.
+- The real budget count holds: goal tests counted with the count command in the "AI loop" section of `CLAUDE.md` (`pytest --collect-only -m goal` in Python) are at most 10, and `.goal/checks/*.sh` at most 2, unless `.goal/plan.md` records a waiver.
 
 A check that passes, or fails for another reason, goes back to the test-author in update mode with the output. When a check passes because the behaviour already exists, take that to the human: the issue may already be done.
 

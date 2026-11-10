@@ -6,6 +6,7 @@ Each section gives the edits for one language:
 
 - the `unit` change and the `goal-tests` target;
 - the Makefile variables, already `$$`-escaped: `GOAL_TAG_PATTERN` / `GOAL_TAG_PATHS` find goal tests, and `GOAL_SETTLE_SED` / `GOAL_SETTLE_MV` settle them;
+- the **count** command, which lists the goal's tests so `/groom-issue` can check the budget (10 goal tests, scenarios included; the `.goal/checks` budget is counted with `ls .goal/checks/*.sh | wc -l`);
 - the BDD runner wiring;
 - the **probe** for `make goal-selftest`: `scripts/goal-selftest/dest` holds the path, and `scripts/goal-selftest/probe` holds the content. The path must be one that `make unit` runs.
 
@@ -21,6 +22,7 @@ The Gherkin settle lines are the same everywhere; `GHERKIN_SED` below stands for
 
 - Register the marker beside `unit` and `integration` in the pytest config: `goal: red test for the active PR goal`. Keep `--strict-markers` on if it already is.
 - `unit`: `-m "unit"` becomes `-m "unit and not goal"`.
+- Count: `python3 -m pytest --collect-only -q -m goal tests/ | grep -c '::'`.
 - `goal-tests` (exit 5 means nothing collected, which a checks-only goal produces):
 
   ```makefile
@@ -53,6 +55,7 @@ The Gherkin settle lines are the same everywhere; `GHERKIN_SED` below stands for
 ## Go (go test, godog)
 
 - Goal tests live in their own `*_test.go` files that start with `//go:build goal` and a blank line. `unit` needs no change: plain `go test` skips them.
+- Count: `go test -tags goal -list '^Test' ./... | grep -c '^Test'`.
 - `goal-tests`:
 
   ```makefile
@@ -102,6 +105,7 @@ The Gherkin settle lines are the same everywhere; `GHERKIN_SED` below stands for
 ## Rust (cargo test, cucumber)
 
 - Add `[features]` `goal = []` to `Cargo.toml`; it stays after settle as the mechanism. Each goal test or test module carries `#[cfg(feature = "goal")]` on the line above it, so it is not even compiled into `unit`. `unit` needs no change.
+- Count: `cargo test --features goal -- --list 2>/dev/null | grep -c ': test$'`.
 - `goal-tests`:
 
   ```makefile
@@ -145,6 +149,7 @@ The Gherkin settle lines are the same everywhere; `GHERKIN_SED` below stands for
 ## TypeScript (vitest or jest, @cucumber/cucumber)
 
 - Goal tests are files named `*.goal.test.ts`. Exclude them from the unit run unless `GOAL` is set. vitest: `exclude: [...configDefaults.exclude, ...(process.env.GOAL ? [] : ["**/*.goal.test.*"])]`. jest: the same condition in `testPathIgnorePatterns`.
+- Count (vitest): `GOAL=1 npx vitest list goal.test | grep -c '>'`. jest: `GOAL=1 npx jest --listTests goal.test` lists files only, so count `it(`/`test(` calls in them with `grep -cE '^\s*(it|test)(\.each)?\('`.
 - `goal-tests`:
 
   ```makefile
@@ -178,7 +183,7 @@ The Gherkin settle lines are the same everywhere; `GHERKIN_SED` below stands for
 
 No BDD runner: acceptance criteria become `terraform test` runs and temporary checks.
 
-- **Stacks repo.** Goal tests go in `modules/<name>/goal-tests/*.tftest.hcl`. Add `scripts/goal-tests.sh`, a copy of `scripts/unit.sh` that runs `terraform test -test-directory=goal-tests` in each module that has that directory, through `$(MISE)`. `unit` needs no change.
+- **Stacks repo.** Count: `grep -c '^run ' modules/*/goal-tests/*.tftest.hcl`. Goal tests go in `modules/<name>/goal-tests/*.tftest.hcl`. Add `scripts/goal-tests.sh`, a copy of `scripts/unit.sh` that runs `terraform test -test-directory=goal-tests` in each module that has that directory, through `$(MISE)`. `unit` needs no change.
 
   ```makefile
   goal-tests: install ## Run goal-tagged terraform tests only
@@ -206,4 +211,4 @@ No BDD runner: acceptance criteria become `terraform test` runs and temporary ch
 
 ## Other languages
 
-Ask the human for the test runner, then apply the same contract: a tag or path that one command excludes from `unit` and another runs, a pattern that finds it, a settle edit that removes it, and a probe.
+Ask the human for the test runner, then apply the same contract: a tag or path that one command excludes from `unit` and another runs, a pattern that finds it, a settle edit that removes it, a command that counts it for the budget, and a probe.
